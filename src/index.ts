@@ -21,10 +21,26 @@ dotenv.config();
 
 const COMMAND_PREFIX = process.env.COMMAND_PREFIX || '!';
 const ONLY_OWNER = process.env.ONLY_OWNER !== 'false'; // Padrão: apenas você pode comandar o bot
+const ALWAYS_PRIVATE = process.env.ALWAYS_PRIVATE === 'true'; // Se true, sempre manda no privado quando em grupos
 const ALLOWED_NUMBERS = (process.env.ALLOWED_NUMBERS || '')
   .split(',')
   .map((n) => n.trim())
   .filter(Boolean);
+
+/**
+ * Obtém o JID do WhatsApp privado do usuário (dono da conta)
+ */
+function getOwnerJid(sock: any, msg: WAMessage): string {
+  if (sock.user?.id) {
+    const cleanNumber = sock.user.id.split(':')[0].replace(/[^0-9]/g, '');
+    return `${cleanNumber}@s.whatsapp.net`;
+  }
+  if (msg.key.participant) {
+    const cleanNumber = msg.key.participant.split(':')[0].replace(/[^0-9]/g, '');
+    return `${cleanNumber}@s.whatsapp.net`;
+  }
+  return msg.key.remoteJid || '';
+}
 
 /**
  * Verifica se quem enviou o comando tem permissão de execução
@@ -43,7 +59,7 @@ function isAuthorized(msg: WAMessage): boolean {
  * Função principal que inicia o cliente WhatsApp e escuta os eventos
  */
 async function startWhatsAppBot() {
-  console.log('\n🚀 Iniciando WhatsApp AI Summarizer (com SQLite Persistente)...');
+  console.log('\n🚀 Iniciando WhatsApp AI Summarizer (com Modo Fantasma / Privado)...');
 
   // 1. Gerenciamento de Estado da Sessão
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -82,14 +98,14 @@ async function startWhatsAppBot() {
         }, 3000);
       }
     } else if (connection === 'open') {
-      console.log('\n✅ SUCESSO: WhatsApp Conectado e Monitorando com Banco SQLite!');
+      console.log('\n✅ SUCESSO: WhatsApp Conectado com SQLite e Modo Privado!');
       console.log(`🤖 Superpoderes ativos:`);
-      console.log(`   👉 "${COMMAND_PREFIX}resumo"           - Resume as conversas recentes salvas no SQLite`);
-      console.log(`   👉 "${COMMAND_PREFIX}pergunta <duvida>" - Responde perguntas sobre o chat`);
-      console.log(`   👉 "${COMMAND_PREFIX}buscar <palavra>" - Pesquisa mensagens antigas no banco SQLite`);
-      console.log(`   👉 "${COMMAND_PREFIX}historico"        - Exibe o último resumo gerado (sem gastar cota)`);
-      console.log(`   👉 "${COMMAND_PREFIX}ouvir"            - Transcreve áudios com Gemini`);
-      console.log(`   👉 Trava de segurança: ${ONLY_OWNER ? '🔒 Apenas você tem acesso' : '🌐 Aberto para todos'}\n`);
+      console.log(`   👉 "${COMMAND_PREFIX}resumo"           - Responde no grupo`);
+      console.log(`   👉 "${COMMAND_PREFIX}resumo pv"        - 👻 Envia no seu PRIVADO em segredo!`);
+      console.log(`   👉 "${COMMAND_PREFIX}pergunta pv <dúvida>" - Responde pergunta no privado`);
+      console.log(`   👉 "${COMMAND_PREFIX}ouvir pv"         - Transcreve áudio e manda no privado`);
+      console.log(`   👉 "${COMMAND_PREFIX}buscar <palavra>" - Pesquisa mensagens no banco SQLite`);
+      console.log(`   👉 Modo Fantasma Padrão: ${ALWAYS_PRIVATE ? '👻 ATIVADO (Sempre privado)' : '👥 DESATIVADO (Responde onde chamar)'}\n`);
     }
   });
 
@@ -146,63 +162,88 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
     return;
   }
 
-  // --- TRATAMENTO DE COMANDOS ---
-  const args = text.slice(COMMAND_PREFIX.length).trim().split(/\s+/);
-  const command = args[0]?.toLowerCase();
+  // --- TRATAMENTO DE COMANDOS E MODOS DE VISIBILIDADE ---
+  const allArgs = text.slice(COMMAND_PREFIX.length).trim().split(/\s+/);
+  const command = allArgs[0]?.toLowerCase();
 
-  // COMANDO 1: !resumo [n]
+  // Verifica se o usuário pediu modo privado (pv, privado, segredo) ou forçou grupo (grupo, publico)
+  const lowerArgs = allArgs.map((a) => a.toLowerCase());
+  const explicitlyPrivate = lowerArgs.includes('pv') || lowerArgs.includes('privado') || lowerArgs.includes('segredo');
+  const explicitlyGroup = lowerArgs.includes('grupo') || lowerArgs.includes('publico');
+
+  // Decide se a resposta deve ser enviada no privado do usuário
+  const shouldSendPrivate = isGroup && (explicitlyPrivate || (ALWAYS_PRIVATE && !explicitlyGroup));
+
+  // Define o destino da mensagem: se privado, envia para a conversa pessoal do usuário
+  const destinationJid = shouldSendPrivate ? getOwnerJid(sock, msg) : remoteJid;
+
+  // Argumentos limpos (removendo as flags de privacidade para não atrapalhar o comando)
+  const cleanArgs = allArgs.slice(1).filter((a) => !['pv', 'privado', 'segredo', 'grupo', 'publico'].includes(a.toLowerCase()));
+
+  // Notificação discreta no grupo quando a resposta for desviada para o privado
+  const notifyGroupAboutPrivate = async () => {
+    if (shouldSendPrivate && isGroup) {
+      await sock.sendMessage(remoteJid, { text: `🤫 _Enviei a resposta no seu privado em segredo!_` });
+    }
+  };
+
+  // COMANDO 1: !resumo [n] [pv]
   if (command === 'resumo') {
-    const limit = args[1] && !isNaN(Number(args[1])) ? Math.min(Number(args[1]), 200) : 50;
+    const limit = cleanArgs[0] && !isNaN(Number(cleanArgs[0])) ? Math.min(Number(cleanArgs[0]), 200) : 50;
     const recentMessages = appDatabase.getRecentMessages(remoteJid, limit);
 
     if (recentMessages.length < 3) {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(destinationJid, {
         text: `⚠️ Ainda não há mensagens suficientes gravadas no SQLite para gerar um resumo (mínimo de 3 mensagens). Converse um pouco e tente de novo!`,
       });
       return;
     }
 
-    await sock.sendMessage(remoteJid, {
-      text: `⏳ _Consultando ${recentMessages.length} mensagens do banco SQLite e gerando resumo com Gemini AI..._`,
+    await notifyGroupAboutPrivate();
+
+    await sock.sendMessage(destinationJid, {
+      text: `⏳ _Consultando ${recentMessages.length} mensagens do grupo e gerando resumo com Gemini AI..._`,
     });
 
     try {
       const formattedChat = appDatabase.formatForAI(recentMessages);
       const summaryResult = await generateChatSummary(formattedChat);
 
-      // Salva o resumo no banco SQLite para consulta futura
+      // Salva o resumo no banco SQLite
       appDatabase.saveSummary(remoteJid, summaryResult);
 
       const responseMessage = formatSummaryForWhatsApp(summaryResult);
-      await sock.sendMessage(remoteJid, { text: responseMessage });
+      await sock.sendMessage(destinationJid, { text: responseMessage });
     } catch (error: any) {
       console.error('Erro ao gerar resumo:', error);
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(destinationJid, {
         text: `❌ Falha ao processar resumo: ${error.message || 'Erro inesperado'}`,
       });
     }
   }
 
-  // COMANDO 2: !pergunta <dúvida sobre o histórico do chat>
+  // COMANDO 2: !pergunta [pv] <dúvida sobre o histórico do chat>
   else if (command === 'pergunta') {
-    const question = args.slice(1).join(' ').trim();
+    const question = cleanArgs.join(' ').trim();
 
     if (!question) {
-      await sock.sendMessage(remoteJid, {
-        text: `💡 *Como usar:* Digite \`${COMMAND_PREFIX}pergunta <sua dúvida>\`.\nExemplo: \`${COMMAND_PREFIX}pergunta Qual o horário da reunião?\``,
+      await sock.sendMessage(destinationJid, {
+        text: `💡 *Como usar:* Digite \`${COMMAND_PREFIX}pergunta <sua dúvida>\` (adicione \`pv\` se quiser no privado).\nExemplo: \`${COMMAND_PREFIX}pergunta pv Qual o horário da reunião?\``,
       });
       return;
     }
 
     const recentMessages = appDatabase.getRecentMessages(remoteJid, 100);
     if (recentMessages.length === 0) {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(destinationJid, {
         text: `⚠️ Nenhuma mensagem encontrada no banco SQLite desta conversa para responder sua pergunta.`,
       });
       return;
     }
 
-    await sock.sendMessage(remoteJid, {
+    await notifyGroupAboutPrivate();
+
+    await sock.sendMessage(destinationJid, {
       text: `🔍 _Consultando histórico no SQLite para responder sua dúvida..._`,
     });
 
@@ -210,32 +251,34 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       const formattedChat = appDatabase.formatForAI(recentMessages);
       const answer = await answerChatQuestion(formattedChat, question);
 
-      const reply = `❓ *Pergunta:* ${question}\n\n💡 *Resposta da IA:*\n${answer}\n\n_Baseado no histórico salvo no SQLite_ 🗄️🤖`;
-      await sock.sendMessage(remoteJid, { text: reply });
+      const reply = `❓ *Pergunta:* ${question}\n\n💡 *Resposta da IA:*\n${answer}\n\n_Baseado no histórico do grupo_ 🗄️🤖`;
+      await sock.sendMessage(destinationJid, { text: reply });
     } catch (error: any) {
       console.error('Erro ao responder pergunta:', error);
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(destinationJid, {
         text: `❌ Erro ao consultar IA: ${error.message || 'Erro inesperado'}`,
       });
     }
   }
 
-  // COMANDO 3: !buscar <palavra> (Pesquisa rápida no banco SQLite)
+  // COMANDO 3: !buscar [pv] <palavra>
   else if (command === 'buscar') {
-    const query = args.slice(1).join(' ').trim();
+    const query = cleanArgs.join(' ').trim();
 
     if (!query) {
-      await sock.sendMessage(remoteJid, {
-        text: `🔍 *Como usar:* Digite \`${COMMAND_PREFIX}buscar <palavra>\` para localizar mensagens antigas no banco SQLite.`,
+      await sock.sendMessage(destinationJid, {
+        text: `🔍 *Como usar:* Digite \`${COMMAND_PREFIX}buscar <palavra>\` (adicione \`pv\` para receber no privado).`,
       });
       return;
     }
 
+    await notifyGroupAboutPrivate();
+
     const matches = appDatabase.searchMessages(remoteJid, query, 5);
 
     if (matches.length === 0) {
-      await sock.sendMessage(remoteJid, {
-        text: `🔍 Nenhuma mensagem encontrada com o termo "${query}" no banco SQLite.`,
+      await sock.sendMessage(destinationJid, {
+        text: `🔍 Nenhuma mensagem encontrada com o termo "${query}" no banco SQLite desta conversa.`,
       });
       return;
     }
@@ -252,41 +295,45 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       })
       .join('\n\n');
 
-    await sock.sendMessage(remoteJid, {
-      text: `🗄️ *MENSAGENS ENCONTRADAS NO SQLITE ("${query}"):*\n\n${resultados}`,
+    await sock.sendMessage(destinationJid, {
+      text: `🗄️ *MENSAGENS ENCONTRADAS ("${query}"):*\n\n${resultados}`,
     });
   }
 
-  // COMANDO 4: !historico (Recupera o último resumo sem gastar cota da IA)
+  // COMANDO 4: !historico [pv]
   else if (command === 'historico') {
     const last = appDatabase.getLastSummary(remoteJid);
 
     if (!last) {
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(destinationJid, {
         text: `ℹ️ Nenhum resumo anterior foi encontrado no banco de dados para esta conversa. Use \`${COMMAND_PREFIX}resumo\` primeiro!`,
       });
       return;
     }
 
-    const dataFormatada = last.date.toLocaleString('pt-BR');
-    const msg = `📑 *ÚLTIMO RESUMO ARQUIVADO* (Gerado em ${dataFormatada}):\n\n` + formatSummaryForWhatsApp(last.summary);
+    await notifyGroupAboutPrivate();
 
-    await sock.sendMessage(remoteJid, { text: msg });
+    const dataFormatada = last.date.toLocaleString('pt-BR');
+    const msgFormatted = `📑 *ÚLTIMO RESUMO ARQUIVADO* (Gerado em ${dataFormatada}):\n\n` + formatSummaryForWhatsApp(last.summary);
+
+    await sock.sendMessage(destinationJid, { text: msgFormatted });
   }
 
-  // COMANDO 5: !ouvir (Transcreve e resume o áudio citado)
+  // COMANDO 5: !ouvir [pv] (Transcreve e resume o áudio citado)
   else if (command === 'ouvir' || command === 'audio') {
     const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const isAudioQuote = Boolean(quotedMsg?.audioMessage);
 
     if (!isAudioQuote) {
-      await sock.sendMessage(remoteJid, {
-        text: `🎙️ *Como usar:* Responda a qualquer mensagem de áudio digitando \`${COMMAND_PREFIX}ouvir\` para transcrever e resumir o que foi dito!`,
+      await sock.sendMessage(destinationJid, {
+        text: `🎙️ *Como usar:* Responda a qualquer mensagem de áudio digitando \`${COMMAND_PREFIX}ouvir\` (ou \`${COMMAND_PREFIX}ouvir pv\` para receber no privado)!`,
       });
       return;
     }
 
-    await sock.sendMessage(remoteJid, {
+    await notifyGroupAboutPrivate();
+
+    await sock.sendMessage(destinationJid, {
       text: `🎧 _Baixando áudio e enviando para o Gemini transcrever... Aguarde alguns segundos!_`,
     });
 
@@ -314,10 +361,10 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       const audioResult = await transcribeAndSummarizeAudio(base64Audio, mimeType);
       const replyMessage = formatAudioSummaryForWhatsApp(audioResult);
 
-      await sock.sendMessage(remoteJid, { text: replyMessage });
+      await sock.sendMessage(destinationJid, { text: replyMessage });
     } catch (error: any) {
       console.error('Erro ao transcrever áudio:', error);
-      await sock.sendMessage(remoteJid, {
+      await sock.sendMessage(destinationJid, {
         text: `❌ Falha ao processar o áudio com IA: ${error.message || 'Erro ao decodificar áudio'}`,
       });
     }
@@ -325,36 +372,39 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 
   // COMANDO 6: !ajuda
   else if (command === 'ajuda') {
-    const helpText = `🤖 *WhatsApp AI Summarizer + SQLite - Comandos*
+    const helpText = `🤖 *WhatsApp AI Summarizer - Comandos & Modos de Privacidade*
 
 • \`${COMMAND_PREFIX}resumo [n]\`
-  Gera resumo das últimas mensagens do banco SQLite (padrão: 50).
+  Gera resumo e envia no próprio grupo.
 
-• \`${COMMAND_PREFIX}pergunta <dúvida>\`
-  Responde dúvidas sobre o histórico da conversa com IA.
+• \`${COMMAND_PREFIX}resumo pv [n]\` (ou \`privado\`)
+  👻 *Modo Fantasma:* Gera o resumo do grupo e envia no seu PRIVADO em segredo!
 
-• \`${COMMAND_PREFIX}buscar <palavra>\`
-  Pesquisa rápida no banco SQLite de mensagens anteriores.
+• \`${COMMAND_PREFIX}pergunta [pv] <dúvida>\`
+  Responde dúvidas sobre o histórico (adicione \`pv\` para receber no privado).
 
-• \`${COMMAND_PREFIX}historico\`
-  Exibe o último resumo gerado sem gastar cota de IA.
+• \`${COMMAND_PREFIX}buscar [pv] <palavra>\`
+  Pesquisa mensagens antigas no banco SQLite.
 
-• \`${COMMAND_PREFIX}ouvir\`
-  Responda a um áudio com este comando para transcrever e resumir.
+• \`${COMMAND_PREFIX}historico [pv]\`
+  Recupera o último resumo sem gastar IA.
+
+• \`${COMMAND_PREFIX}ouvir [pv]\`
+  Responda a um áudio com este comando para transcrever (adicione \`pv\` para segredo).
 
 • \`${COMMAND_PREFIX}limpar\`
   Apaga o histórico do banco de dados desta conversa.
 
-🗄️ *Persistência:* Banco de dados SQLite ativo com WAL mode.
-🔒 *Segurança:* ${ONLY_OWNER ? 'Apenas você tem permissão.' : 'Comandos liberados para o grupo.'}`;
+🔒 *Segurança:* ${ONLY_OWNER ? 'Apenas você tem permissão.' : 'Comandos liberados para o grupo.'}
+👻 *Modo Fantasma Padrão:* ${ALWAYS_PRIVATE ? 'ATIVADO (sempre privado)' : 'DESATIVADO (adicione "pv" quando quiser segredo)'}`;
 
-    await sock.sendMessage(remoteJid, { text: helpText });
+    await sock.sendMessage(destinationJid, { text: helpText });
   }
 
   // COMANDO 7: !limpar
   else if (command === 'limpar') {
     appDatabase.clearChat(remoteJid);
-    await sock.sendMessage(remoteJid, { text: `🧹 Histórico desta conversa apagado do banco SQLite com sucesso!` });
+    await sock.sendMessage(destinationJid, { text: `🧹 Histórico desta conversa apagado do banco SQLite com sucesso!` });
   }
 }
 
