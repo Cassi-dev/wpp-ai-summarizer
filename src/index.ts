@@ -11,10 +11,17 @@ import qrcode from 'qrcode-terminal';
 import { appDatabase } from './database.js';
 import {
   answerChatQuestion,
+  explainMessage,
+  extractTasks,
+  factCheckMessage,
   formatAudioSummaryForWhatsApp,
   formatSummaryForWhatsApp,
   generateChatSummary,
+  splitExpenses,
+  suggestReplies,
+  summarizeLinkContent,
   transcribeAndSummarizeAudio,
+  translateMessage,
 } from './gemini.js';
 import { ChatMessage } from './types.js';
 
@@ -81,7 +88,7 @@ function isAuthorized(msg: WAMessage): boolean {
  * Função principal que inicia o cliente WhatsApp e escuta os eventos
  */
 async function startWhatsAppBot() {
-  console.log('\n🚀 Iniciando WhatsApp AI Summarizer (com Modo Fantasma Invisível 🧠)...');
+  console.log('\n🚀 Iniciando WhatsApp AI Summarizer (com Suíte Completa de Reações)...');
 
   // 1. Gerenciamento de Estado da Sessão
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -127,14 +134,11 @@ async function startWhatsAppBot() {
         }, 3000);
       }
     } else if (connection === 'open') {
-      console.log('\n✅ SUCESSO: WhatsApp Conectado com SQLite e Modo Fantasma!');
-      console.log(`🤖 Superpoderes ativos:`);
-      console.log(`   👉 🧠 Reação com Emoji - Reaja com 🧠 em qualquer mensagem e receba o resumo no privado!`);
-      console.log(`   👉 "${COMMAND_PREFIX}resumo"           - Responde no próprio chat`);
-      console.log(`   👉 "${COMMAND_PREFIX}resumo pv"        - Envia no seu PRIVADO sem avisos`);
-      console.log(`   👉 "${COMMAND_PREFIX}pergunta pv <dúvida>" - Responde pergunta no privado`);
-      console.log(`   👉 "${COMMAND_PREFIX}ouvir pv"         - Transcreve áudio no privado`);
-      console.log(`   👉 "${COMMAND_PREFIX}buscar [pv] <palavra>" - Pesquisa mensagens no SQLite\n`);
+      console.log('\n✅ SUCESSO: WhatsApp Conectado com Suíte Completa de Emojis!');
+      console.log(`🤖 Emojis Invisíveis Ativos no Privado:`);
+      console.log(`   👉 🧠 (Resumir)  | ✍️ (Ghostwriter) | 💡 (Explicar) | 📌 (Salvar) | 🌐 (Traduzir)`);
+      console.log(`   👉 🎯 (Tarefas)  | 🕵️ (Fact-Check)  | 💰 (Rachid)   | 🔗 (Resumir Link) | 🎧 (Áudio)`);
+      console.log(`   👉 Digite "!emojis" no seu WhatsApp para ver o manual completo!\n`);
     }
   });
 
@@ -165,47 +169,12 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
   const ownerJid = getOwnerJid(sock, msg);
 
   // =========================================================================
-  // 1. GATILHO INVISÍVEL: REAÇÃO COM O EMOJI 🧠
+  // 1. DISPATCHER DE REAÇÕES INVISÍVEIS POR EMOJI
   // =========================================================================
   const reaction = msg.message?.reactionMessage;
-  if (reaction && reaction.text === '🧠') {
+  if (reaction && reaction.text) {
     if (!isAuthorized(msg)) return;
-
-    const targetChatJid = reaction.key?.remoteJid;
-    if (!targetChatJid) return;
-
-    const isGrp = targetChatJid.endsWith('@g.us');
-    const chatTitle = isGrp ? 'Grupo' : 'Conversa';
-
-    console.log(`\n🧠 [Gatilho Invisível]: Reação com emoji 🧠 detectada no chat: ${targetChatJid}`);
-
-    const recentMessages = appDatabase.getRecentMessages(targetChatJid, 50);
-    if (recentMessages.length < 3) {
-      await sock.sendMessage(ownerJid, {
-        text: `⚠️ [${chatTitle}] Poucas mensagens registradas no SQLite para gerar um resumo (mínimo de 3 mensagens).`,
-      });
-      return;
-    }
-
-    console.log(`📤 Enviando resumo silencioso diretamente para seu privado: ${ownerJid}`);
-
-    try {
-      const formattedChat = appDatabase.formatForAI(recentMessages);
-      const summaryResult = await generateChatSummary(formattedChat);
-      appDatabase.saveSummary(targetChatJid, summaryResult);
-
-      const responseMessage =
-        `👻 *[MODO FANTASMA INVISÍVEL 🧠]*\n📋 *Resumo de: ${chatTitle}*\n\n` +
-        formatSummaryForWhatsApp(summaryResult);
-
-      await sock.sendMessage(ownerJid, { text: responseMessage });
-      console.log(`✅ Resumo entregue com sucesso no seu privado!`);
-    } catch (err: any) {
-      console.error('Erro ao gerar resumo por reação:', err);
-      await sock.sendMessage(ownerJid, {
-        text: `❌ Falha ao processar resumo por reação: ${err.message}`,
-      });
-    }
+    await handleReactionTrigger(sock, msg, reaction, ownerJid);
     return;
   }
 
@@ -255,25 +224,91 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 
   const isAlreadyPrivateChat = remoteJid === ownerJid;
 
-  // Decide se a resposta deve ser desviada para o seu privado pessoal
+  // Decide se a resposta deve ser enviada para o seu privado pessoal
   const shouldSendPrivate =
     !isAlreadyPrivateChat &&
     (explicitlyPrivate || (isGroup && ALWAYS_PRIVATE && !explicitlyGroup));
 
-  // O destino real da resposta: se privado, manda EXCLUSIVAMENTE para você
   const destinationJid = shouldSendPrivate ? ownerJid : remoteJid;
 
   // Argumentos limpos
   const cleanArgs = allArgs.slice(1).filter((a) => !['pv', 'privado', 'segredo', 'grupo', 'publico'].includes(a.toLowerCase()));
-
-  // Identificador do chat para você saber de onde veio o resumo
   const chatContextLabel = isGroup ? '👥 Grupo' : `👤 Conversa com ${senderName}`;
 
   console.log(`\n🤖 Comando [${command}] disparado no chat: ${remoteJid}`);
   console.log(`   Destino da resposta: ${destinationJid} (Modo Privado: ${shouldSendPrivate})`);
 
+  // COMANDO: !emojis ou !superpoderes (MANUAL COMPLETO DAS REAÇÕES)
+  if (command === 'emojis' || command === 'superpoderes') {
+    const guide = `🎛️ *CATÁLOGO DE SUPERPODERES INVISÍVEIS (REAÇÕES)* 🤫
+
+Reaja com qualquer um destes emojis em qualquer mensagem de qualquer chat para ativar a IA em silêncio absoluto (a resposta chega somente no seu privado!):
+
+🧠 *[Cérebro]* ➔ *Resumo Completo:*
+Lê as últimas 50 mensagens daquele chat e gera um resumo executivo com tópicos, decisões e urgência.
+
+✍️ *[Caneta]* ➔ *Ghostwriter de Respostas:*
+Gera 3 opções elegantes de resposta para você enviar de volta (Profissional, Amigável ou Direta).
+
+💡 *[Lâmpada]* ➔ *Explicador Didático:*
+Explica um termo técnico, texto longo ou assunto confuso em linguagem simples.
+
+📌 *[Alfinete]* ➔ *Fixar nos Favoritos (SQLite):*
+Salva a mensagem marcada no seu banco de dados local. Digite \`!notas\` para consultar!
+
+🌐 *[Globo]* ➔ *Tradutor Instantâneo:*
+Traduz a mensagem para Português do Brasil com máxima naturalidade.
+
+🎯 *[Alvo]* ➔ *Extrator de Tarefas (To-Do List):*
+Transforma textões de alinhamento em um checklist de afazeres com prazos.
+
+🕵️‍♂️ *[Detetive]* ➔ *Checador de Fatos / Fake News:*
+Analisa indícios de boatos, correntes falsas, sensacionalismo ou golpes.
+
+💰 *[Dinheiro]* ➔ *Divisor de Contas / Rachid:*
+Calcula a divisão matemática exata dos gastos e quem deve quanto no Pix.
+
+🔗 *[Link]* ➔ *Resumidor de Links:*
+Resume o conteúdo e os pontos principais de um link sem você precisar abrir a página.
+
+🎧 *[Fones]* ➔ *Ouvinte de Áudio:*
+Transcreve e resume áudios sem precisar ouvir.
+
+━━━━━━━━━━━━━━━━━━━━
+💡 _Dica: No chat onde você reage, nada é enviado nem apagado. Ninguém vê nada além da sua reação!_`;
+
+    await sock.sendMessage(destinationJid, { text: guide });
+  }
+
+  // COMANDO: !notas (LISTA TODAS AS MENSAGENS FIXADAS COM 📌)
+  else if (command === 'notas') {
+    const notes = appDatabase.getPinnedNotes(15);
+    if (notes.length === 0) {
+      await sock.sendMessage(destinationJid, {
+        text: `📌 Nenhuma nota fixada ainda. Reaja com o emoji 📌 em qualquer mensagem para arquivá-la aqui!`,
+      });
+      return;
+    }
+
+    const items = notes
+      .map((n, i) => {
+        const data = n.date.toLocaleString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        return `${i + 1}. 📌 *[${n.chatTitle}]* (${data}) - *${n.senderName}*:\n"${n.text}"`;
+      })
+      .join('\n\n');
+
+    await sock.sendMessage(destinationJid, {
+      text: `📋 *SUAS NOTAS E MENSAGENS FIXADAS (SQLite):*\n\n${items}`,
+    });
+  }
+
   // COMANDO 1: !resumo [n] [pv]
-  if (command === 'resumo') {
+  else if (command === 'resumo') {
     const limit = cleanArgs[0] && !isNaN(Number(cleanArgs[0])) ? Math.min(Number(cleanArgs[0]), 200) : 50;
     const recentMessages = appDatabase.getRecentMessages(remoteJid, limit);
 
@@ -288,7 +323,6 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       const formattedChat = appDatabase.formatForAI(recentMessages);
       const summaryResult = await generateChatSummary(formattedChat);
 
-      // Salva o resumo no banco SQLite
       appDatabase.saveSummary(remoteJid, summaryResult);
 
       let responseMessage = formatSummaryForWhatsApp(summaryResult);
@@ -407,7 +441,7 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
     await sock.sendMessage(destinationJid, { text: msgFormatted });
   }
 
-  // COMANDO 5: !ouvir [pv] (Transcreve e resume o áudio citado)
+  // COMANDO 5: !ouvir [pv]
   else if (command === 'ouvir' || command === 'audio') {
     const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const isAudioQuote = Boolean(quotedMsg?.audioMessage);
@@ -459,30 +493,27 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 
   // COMANDO 6: !ajuda
   else if (command === 'ajuda') {
-    const helpText = `🤖 *WhatsApp AI Summarizer - Comandos & Gatilhos*
+    const helpText = `🤖 *WhatsApp AI Summarizer - Menu Principal*
 
-• 🧠 *Gatilho Invisível (Reação):*
-  Reaja com o emoji 🧠 a qualquer mensagem de qualquer chat para receber o resumo no seu privado em silêncio absoluto!
+• \`!emojis\` ou \`!superpoderes\`
+  Exibe o catálogo completo de reações por emojis invisíveis!
 
-• \`${COMMAND_PREFIX}resumo [n]\`
-  Gera resumo e responde no próprio chat.
+• \`!notas\`
+  Lista todas as mensagens e notas que você fixou com 📌 no SQLite.
 
-• \`${COMMAND_PREFIX}resumo pv [n]\`
-  Gera resumo e envia apenas no seu privado.
+• \`!resumo [n]\` (adicione \`pv\` para segredo)
+  Gera resumo das últimas mensagens do chat.
 
-• \`${COMMAND_PREFIX}pergunta [pv] <dúvida>\`
-  Responde dúvidas sobre o histórico.
+• \`!pergunta [pv] <dúvida>\`
+  Faz uma pergunta para a IA sobre o histórico da conversa.
 
-• \`${COMMAND_PREFIX}buscar [pv] <palavra>\`
-  Pesquisa mensagens antigas no SQLite.
+• \`!buscar [pv] <palavra>\`
+  Pesquisa no histórico do SQLite.
 
-• \`${COMMAND_PREFIX}ouvir [pv]\`
-  Responda a um áudio para transcrever.
+• \`!historico [pv]\`
+  Exibe o último resumo gerado sem gastar IA.
 
-• \`${COMMAND_PREFIX}historico [pv]\`
-  Recupera o último resumo sem gastar IA.
-
-• \`${COMMAND_PREFIX}limpar\`
+• \`!limpar\`
   Apaga o histórico do banco de dados desta conversa.`;
 
     await sock.sendMessage(destinationJid, { text: helpText });
@@ -492,6 +523,190 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
   else if (command === 'limpar') {
     appDatabase.clearChat(remoteJid);
     await sock.sendMessage(destinationJid, { text: `🧹 Histórico de [${chatContextLabel}] apagado do banco SQLite!` });
+  }
+}
+
+/**
+ * Processador dedicado para todas as Reações com Emojis (Gatilhos Invisíveis)
+ */
+async function handleReactionTrigger(sock: any, msg: WAMessage, reaction: any, ownerJid: string) {
+  const emoji = reaction.text?.trim();
+  const targetChatJid = reaction.key?.remoteJid;
+  const targetMsgId = reaction.key?.id;
+
+  if (!targetChatJid) return;
+
+  const isGrp = targetChatJid.endsWith('@g.us');
+  const chatTitle = isGrp ? 'Grupo' : 'Conversa Privada';
+
+  // 1. EMOJI 🧠: RESUMO DO CHAT
+  if (emoji === '🧠') {
+    console.log(`\n🧠 [Gatilho 🧠]: Resumindo chat ${targetChatJid}...`);
+    const recentMessages = appDatabase.getRecentMessages(targetChatJid, 50);
+
+    if (recentMessages.length < 3) {
+      await sock.sendMessage(ownerJid, {
+        text: `⚠️ [${chatTitle}] Poucas mensagens registradas no SQLite para gerar um resumo (mínimo de 3 mensagens).`,
+      });
+      return;
+    }
+
+    try {
+      const formattedChat = appDatabase.formatForAI(recentMessages);
+      const summaryResult = await generateChatSummary(formattedChat);
+      appDatabase.saveSummary(targetChatJid, summaryResult);
+
+      const responseMessage =
+        `👻 *[MODO FANTASMA INVISÍVEL 🧠]*\n📋 *Resumo de: ${chatTitle}*\n\n` +
+        formatSummaryForWhatsApp(summaryResult);
+
+      await sock.sendMessage(ownerJid, { text: responseMessage });
+      console.log(`✅ Resumo 🧠 entregue com sucesso no privado!`);
+    } catch (err: any) {
+      console.error('Erro no gatilho 🧠:', err);
+    }
+    return;
+  }
+
+  // 2. BUSCA A MENSAGEM ALVO NO BANCO DE DADOS
+  const targetMsg = appDatabase.getMessageById(targetMsgId || '');
+
+  // 3. EMOJI 📌: SALVAR NOTA NOS FAVORITOS DO SQLITE
+  if (emoji === '📌') {
+    console.log(`\n📌 [Gatilho 📌]: Fixando mensagem nos favoritos...`);
+    if (!targetMsg) {
+      await sock.sendMessage(ownerJid, {
+        text: `⚠️ Mensagem não encontrada no banco SQLite para fixar.`,
+      });
+      return;
+    }
+
+    appDatabase.savePinnedNote(
+      targetMsg.id,
+      targetChatJid,
+      chatTitle,
+      targetMsg.senderName,
+      targetMsg.text
+    );
+
+    const conf = `📌 *MENSAGEM SALVA NOS SEUS FAVORITOS (SQLite)*\n\n🏷️ *Origem:* ${chatTitle}\n👤 *Autor:* ${targetMsg.senderName}\n💬 *Conteúdo:* "${targetMsg.text}"\n\n_Digite !notas no seu privado para ver todas as notas salvas!_`;
+    await sock.sendMessage(ownerJid, { text: conf });
+    console.log(`✅ Nota fixada com sucesso no SQLite!`);
+    return;
+  }
+
+  // Se for qualquer outra ação que exige texto da mensagem
+  if (!targetMsg) {
+    console.log(`ℹ️ Mensagem [${targetMsgId}] não encontrada no banco para a ação do emoji ${emoji}`);
+    return;
+  }
+
+  // 4. EMOJI ✍️: GHOSTWRITER (SUGESTÕES DE RESPOSTA)
+  if (emoji === '✍️' || emoji === '✍') {
+    console.log(`\n✍️ [Gatilho ✍️]: Gerando opções de resposta para mensagem de ${targetMsg.senderName}...`);
+    try {
+      const suggestions = await suggestReplies(targetMsg.text);
+      const reply = `👻 *[GHOSTWRITER ✍️ - ${chatTitle}]*\n👤 *Mensagem de ${targetMsg.senderName}:* "${targetMsg.text}"\n\n` + suggestions;
+      await sock.sendMessage(ownerJid, { text: reply });
+      console.log(`✅ Sugestões de resposta entregues no privado!`);
+    } catch (err: any) {
+      console.error('Erro no gatilho ✍️:', err);
+    }
+    return;
+  }
+
+  // 5. EMOJI 💡: EXPLICADOR DIDÁTICO
+  if (emoji === '💡') {
+    console.log(`\n💡 [Gatilho 💡]: Explicando mensagem de ${targetMsg.senderName}...`);
+    try {
+      const explanation = await explainMessage(targetMsg.text);
+      const reply = `👻 *[EXPLICADOR 💡 - ${chatTitle}]*\n💬 *Texto Original:* "${targetMsg.text}"\n\n` + explanation;
+      await sock.sendMessage(ownerJid, { text: reply });
+      console.log(`✅ Explicação 💡 entregue no privado!`);
+    } catch (err: any) {
+      console.error('Erro no gatilho 💡:', err);
+    }
+    return;
+  }
+
+  // 6. EMOJI 🌐: TRADUTOR PARA PORTUGUÊS
+  if (emoji === '🌐' || emoji === '🌍') {
+    console.log(`\n🌐 [Gatilho 🌐]: Traduzindo mensagem...`);
+    try {
+      const translation = await translateMessage(targetMsg.text);
+      const reply = `👻 *[TRADUTOR 🌐 - ${chatTitle}]*\n💬 *Original:* "${targetMsg.text}"\n\n` + translation;
+      await sock.sendMessage(ownerJid, { text: reply });
+      console.log(`✅ Tradução 🌐 entregue no privado!`);
+    } catch (err: any) {
+      console.error('Erro no gatilho 🌐:', err);
+    }
+    return;
+  }
+
+  // 7. EMOJI 🎯: EXTRATOR DE TAREFAS (TO-DO LIST)
+  if (emoji === '🎯' || emoji === '📋') {
+    console.log(`\n🎯 [Gatilho 🎯]: Extraindo tarefas da mensagem...`);
+    try {
+      const tasks = await extractTasks(targetMsg.text);
+      const reply = `👻 *[EXTRATOR DE TAREFAS 🎯 - ${chatTitle}]*\n💬 *Contexto:* "${targetMsg.text}"\n\n` + tasks;
+      await sock.sendMessage(ownerJid, { text: reply });
+      console.log(`✅ Checklist 🎯 entregue no privado!`);
+    } catch (err: any) {
+      console.error('Erro no gatilho 🎯:', err);
+    }
+    return;
+  }
+
+  // 8. EMOJI 🕵️‍♂️: CHECADOR DE FATOS / FAKE NEWS
+  if (emoji === '🕵️‍♂️' || emoji === '🕵️' || emoji === '🔍') {
+    console.log(`\n🕵️‍♂️ [Gatilho 🕵️‍♂️]: Checando fatos e credibilidade da mensagem...`);
+    try {
+      const factCheck = await factCheckMessage(targetMsg.text);
+      const reply = `👻 *[FACT-CHECK 🕵️‍♂️ - ${chatTitle}]*\n💬 *Mensagem Analisada:* "${targetMsg.text}"\n\n` + factCheck;
+      await sock.sendMessage(ownerJid, { text: reply });
+      console.log(`✅ Análise de fatos 🕵️‍♂️ entregue no privado!`);
+    } catch (err: any) {
+      console.error('Erro no gatilho 🕵️‍♂️:', err);
+    }
+    return;
+  }
+
+  // 9. EMOJI 💰: DIVISOR DE CONTAS / RACHID
+  if (emoji === '💰' || emoji === '🧾') {
+    console.log(`\n💰 [Gatilho 💰]: Calculando divisão de despesas...`);
+    try {
+      const expenses = await splitExpenses(targetMsg.text);
+      const reply = `👻 *[DIVISOR DE CONTAS 💰 - ${chatTitle}]*\n💬 *Gastos Listados:* "${targetMsg.text}"\n\n` + expenses;
+      await sock.sendMessage(ownerJid, { text: reply });
+      console.log(`✅ Divisão de contas 💰 entregue no privado!`);
+    } catch (err: any) {
+      console.error('Erro no gatilho 💰:', err);
+    }
+    return;
+  }
+
+  // 10. EMOJI 🔗: RESUMO DE LINK
+  if (emoji === '🔗' || emoji === '📰') {
+    console.log(`\n🔗 [Gatilho 🔗]: Resumindo link da mensagem...`);
+    const urlMatch = targetMsg.text.match(/https?:\/\/[^\s]+/i);
+    const url = urlMatch ? urlMatch[0] : '';
+
+    if (!url) {
+      await sock.sendMessage(ownerJid, {
+        text: `⚠️ Nenhum link (URL) foi detectado na mensagem para resumir.`,
+      });
+      return;
+    }
+
+    try {
+      const linkSummary = await summarizeLinkContent(url, targetMsg.text);
+      const reply = `👻 *[LEITOR DE LINKS 🔗 - ${chatTitle}]*\n\n` + linkSummary;
+      await sock.sendMessage(ownerJid, { text: reply });
+      console.log(`✅ Resumo do link 🔗 entregue no privado!`);
+    } catch (err: any) {
+      console.error('Erro no gatilho 🔗:', err);
+    }
+    return;
   }
 }
 

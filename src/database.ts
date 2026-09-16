@@ -48,6 +48,19 @@ class SQLiteDatabaseManager {
 
       CREATE INDEX IF NOT EXISTS idx_summaries_chat_time 
       ON summaries (remote_jid, timestamp DESC);
+
+      CREATE TABLE IF NOT EXISTS pinned_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL,
+        chat_jid TEXT NOT NULL,
+        chat_title TEXT NOT NULL,
+        sender_name TEXT NOT NULL,
+        text TEXT NOT NULL,
+        timestamp INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pinned_notes_time 
+      ON pinned_notes (timestamp DESC);
     `);
   }
 
@@ -183,6 +196,59 @@ class SQLiteDatabaseManager {
   public clearChat(remoteJid: string): void {
     this.db.prepare('DELETE FROM messages WHERE remote_jid = ?').run(remoteJid);
     this.db.prepare('DELETE FROM summaries WHERE remote_jid = ?').run(remoteJid);
+  }
+
+  /**
+   * Salva uma mensagem como Nota Fixada/Favorito no SQLite
+   */
+  public savePinnedNote(
+    messageId: string,
+    chatJid: string,
+    chatTitle: string,
+    senderName: string,
+    text: string
+  ): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO pinned_notes (message_id, chat_jid, chat_title, sender_name, text, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(messageId, chatJid, chatTitle, senderName, text, Date.now());
+  }
+
+  /**
+   * Retorna as notas fixadas salvas pelo usuário
+   */
+  public getPinnedNotes(limit: number = 20): Array<{
+    id: number;
+    chatTitle: string;
+    senderName: string;
+    text: string;
+    date: Date;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT id, chat_title as chatTitle, sender_name as senderName, text, timestamp
+      FROM pinned_notes
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(limit) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      chatTitle: r.chatTitle,
+      senderName: r.senderName,
+      text: r.text,
+      date: new Date(r.timestamp),
+    }));
+  }
+
+  /**
+   * Apaga todas as notas fixadas
+   */
+  public clearPinnedNotes(): void {
+    this.db.prepare('DELETE FROM pinned_notes').run();
   }
 
   /**

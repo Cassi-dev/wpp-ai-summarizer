@@ -205,3 +205,226 @@ export function formatAudioSummaryForWhatsApp(result: AudioSummaryResult): strin
 
   return blocos.join('\n');
 }
+
+/**
+ * ✍️ GHOSTWRITER: Sugere 3 opções de resposta para uma mensagem
+ */
+export async function suggestReplies(messageText: string): Promise<string> {
+  const ai = getAIClient();
+  const prompt = `
+Você é um ghostwriter e especialista em comunicação assertiva.
+Analise a mensagem recebida abaixo e elabore 3 opções elegantes de resposta para o usuário enviar de volta.
+
+MENSAGEM RECEBIDA:
+"${messageText}"
+
+Formate sua resposta EXATAMENTE com este modelo em markdown do WhatsApp:
+✍️ *SUGESTÕES DE RESPOSTA*
+
+1. 👔 *Profissional & Diplomática:*
+(coloque o texto aqui)
+
+2. 😊 *Amigável & Conciliadora:*
+(coloque o texto aqui)
+
+3. ⚡ *Direta & Firme:*
+(coloque o texto aqui)
+
+_Dica: Copie a que melhor se adapta à sua situação!_
+`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.6-flash',
+    contents: prompt,
+  });
+
+  return response.text?.trim() || 'Não consegui formular sugestões no momento.';
+}
+
+/**
+ * 💡 EXPLICADOR: Explica um termo, mensagem ou contexto complexo de forma simples
+ */
+export async function explainMessage(messageText: string): Promise<string> {
+  const ai = getAIClient();
+  const prompt = `
+Você é um professor e simplificador de conteúdos.
+Explique o significado, contexto e mensagem central do texto abaixo de forma clara, didática e acessível (como se estivesse explicando para alguém leigo).
+
+TEXTO:
+"${messageText}"
+
+Formate sua resposta em markdown do WhatsApp:
+💡 *EXPLICAÇÃO DA MENSAGEM*
+
+📖 *O que significa:* (1 ou 2 parágrafos simples)
+
+🔍 *Pontos Importantes:*
+• (tópico 1)
+• (tópico 2)
+
+🎯 *Moral da história / Conclusão:* (1 frase)
+`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.6-flash',
+    contents: prompt,
+  });
+
+  return response.text?.trim() || 'Não consegui analisar o texto.';
+}
+
+/**
+ * 🌐 TRADUTOR: Traduz a mensagem para português brasileiro
+ */
+export async function translateMessage(messageText: string): Promise<string> {
+  const ai = getAIClient();
+  const prompt = `
+Traduza o texto abaixo para Português do Brasil com máxima naturalidade e fluência.
+
+TEXTO:
+"${messageText}"
+
+Formato de saída:
+🌐 *TRADUÇÃO PARA PORTUGUÊS*
+
+💬 *Tradução:*
+(texto traduzido)
+
+_Idioma detectado traduzido com sucesso_ ✨
+`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.6-flash',
+    contents: prompt,
+  });
+
+  return response.text?.trim() || 'Erro ao traduzir mensagem.';
+}
+
+/**
+ * 🎯 EXTRATOR DE TAREFAS: Extrai um checklist de afazeres de um texto longo
+ */
+export async function extractTasks(messageText: string): Promise<string> {
+  const ai = getAIClient();
+  const prompt = `
+Você é um gestor de projetos ágil.
+Extraia todas as tarefas, pendências, prazos e ações mencionadas no texto abaixo em formato de checklist de afazeres (To-Do List).
+
+TEXTO:
+"${messageText}"
+
+Formato de saída:
+🎯 *CHECKLIST DE TAREFAS EXTRAÍDO*
+
+📋 *Ações a Fazer:*
+- [ ] Tarefa 1 (Responsável / Prazo se houver)
+- [ ] Tarefa 2
+
+⚠️ *Atenção / Prazos Críticos:*
+(se houver, destaque aqui)
+`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.6-flash',
+    contents: prompt,
+  });
+
+  return response.text?.trim() || 'Nenhuma tarefa identificada.';
+}
+
+/**
+ * 🕵️‍♂️ CHECADOR DE FATOS / FAKE NEWS: Analisa a credibilidade de um boato ou corrente
+ */
+export async function factCheckMessage(messageText: string): Promise<string> {
+  const ai = getAIClient();
+  const prompt = `
+Você é um jornalista investigativo e analista de verificação de fatos (Fact-Checking).
+Analise a mensagem abaixo e avalie se ela tem características de boato viral, corrente falsa, desinformação, golpe ou se parece plausível.
+
+MENSAGEM:
+"${messageText}"
+
+Formato de saída:
+🕵️‍♂️ *ANÁLISE DE CREDIBILIDADE & FACT-CHECK*
+
+🛡️ *Classificação Geral:* (ex: 🟢 Confiável / 🟡 Duvidoso / 🔴 Alerta de Boato ou Golpe)
+
+🔎 *Indícios Detectados:*
+• (análise de linguagem sensacionalista, urgência falsa, falta de fontes, etc.)
+
+💡 *Recomendação:*
+(o que o usuário deve fazer antes de repassar)
+`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.6-flash',
+    contents: prompt,
+  });
+
+  return response.text?.trim() || 'Não consegui checar os fatos desta mensagem.';
+}
+
+/**
+ * 💰 DIVISOR DE DESPESAS / RACHID: Calcula a divisão de contas de uma mensagem
+ */
+export async function splitExpenses(messageText: string): Promise<string> {
+  const ai = getAIClient();
+  const prompt = `
+Você é um assistente financeiro de divisão de despesas (rachid).
+Analise os gastos listados abaixo e calcule a divisão matemática justa de quanto cada pessoa deve pagar ou receber.
+
+MENSAGEM COM GASTOS:
+"${messageText}"
+
+Formato de saída:
+💰 *DIVISÃO DE CONTAS / RACHID*
+
+🧾 *Total Geral Calculado:* R$ ...
+
+👥 *Quanto cada pessoa deve pagar:*
+• Nome: R$ ...
+• Nome: R$ ...
+
+💳 *Resumo para Copiar e Cobrar no Grupo:*
+(mensagem curta e amigável pronta para colar no grupo com chave Pix imaginária)
+`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.6-flash',
+    contents: prompt,
+  });
+
+  return response.text?.trim() || 'Não consegui calcular a divisão de despesas.';
+}
+
+/**
+ * 🔗 RESUMIDOR DE LINKS: Resumo executivo do conteúdo de uma URL
+ */
+export async function summarizeLinkContent(url: string, contextText: string): Promise<string> {
+  const ai = getAIClient();
+  const prompt = `
+Analise o link e o contexto fornecidos e faça um resumo executivo em 3 tópicos dos pontos principais da matéria ou página.
+
+URL: ${url}
+CONTEXTO DA MENSAGEM: "${contextText}"
+
+Formato de saída:
+🔗 *RESUMO DO LINK*
+🌐 *URL:* ${url}
+
+📝 *Destaques Principais:*
+• (ponto 1)
+• (ponto 2)
+• (ponto 3)
+
+_Resumo executivo sem precisar abrir a página_ ⚡
+`;
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.6-flash',
+    contents: prompt,
+  });
+
+  return response.text?.trim() || 'Não consegui resumir o link.';
+}
+
