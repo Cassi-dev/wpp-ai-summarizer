@@ -7,7 +7,12 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "bot:start": "npm run build && pm2 start dist/index.js --name wpp-bot",
+    "bot:stop": "pm2 stop wpp-bot",
+    "bot:restart": "npm run build && pm2 restart wpp-bot",
+    "bot:logs": "pm2 logs wpp-bot",
+    "bot:status": "pm2 status"
   },
   "keywords": [
     "whatsapp",
@@ -32,6 +37,7 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.13.10",
     "@types/qrcode-terminal": "^0.12.2",
+    "pm2": "^7.0.4",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }
