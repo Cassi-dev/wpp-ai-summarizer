@@ -59,7 +59,7 @@ function isAuthorized(msg: WAMessage): boolean {
  * Função principal que inicia o cliente WhatsApp e escuta os eventos
  */
 async function startWhatsAppBot() {
-  console.log('\n🚀 Iniciando WhatsApp AI Summarizer (com Modo Fantasma / Privado)...');
+  console.log('\n🚀 Iniciando WhatsApp AI Summarizer (com Modo Fantasma 100% Silencioso)...');
 
   // 1. Gerenciamento de Estado da Sessão
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -98,14 +98,13 @@ async function startWhatsAppBot() {
         }, 3000);
       }
     } else if (connection === 'open') {
-      console.log('\n✅ SUCESSO: WhatsApp Conectado com SQLite e Modo Privado!');
-      console.log(`🤖 Superpoderes ativos:`);
-      console.log(`   👉 "${COMMAND_PREFIX}resumo"           - Responde no grupo`);
-      console.log(`   👉 "${COMMAND_PREFIX}resumo pv"        - 👻 Envia no seu PRIVADO em segredo!`);
+      console.log('\n✅ SUCESSO: WhatsApp Conectado com SQLite e Modo Fantasma Total!');
+      console.log(`🤖 Comandos disponíveis:`);
+      console.log(`   👉 "${COMMAND_PREFIX}resumo"           - Responde no próprio chat/grupo`);
+      console.log(`   👉 "${COMMAND_PREFIX}resumo pv"        - 👻 Modo Fantasma: Manda no seu PRIVADO (zero mensagem no chat de origem)`);
       console.log(`   👉 "${COMMAND_PREFIX}pergunta pv <dúvida>" - Responde pergunta no privado`);
-      console.log(`   👉 "${COMMAND_PREFIX}ouvir pv"         - Transcreve áudio e manda no privado`);
-      console.log(`   👉 "${COMMAND_PREFIX}buscar <palavra>" - Pesquisa mensagens no banco SQLite`);
-      console.log(`   👉 Modo Fantasma Padrão: ${ALWAYS_PRIVATE ? '👻 ATIVADO (Sempre privado)' : '👥 DESATIVADO (Responde onde chamar)'}\n`);
+      console.log(`   👉 "${COMMAND_PREFIX}ouvir pv"         - Transcreve áudio no privado`);
+      console.log(`   👉 "${COMMAND_PREFIX}buscar [pv] <palavra>" - Pesquisa mensagens no banco SQLite\n`);
     }
   });
 
@@ -166,26 +165,39 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
   const allArgs = text.slice(COMMAND_PREFIX.length).trim().split(/\s+/);
   const command = allArgs[0]?.toLowerCase();
 
-  // Verifica se o usuário pediu modo privado (pv, privado, segredo) ou forçou grupo (grupo, publico)
+  // Flags de privacidade
   const lowerArgs = allArgs.map((a) => a.toLowerCase());
   const explicitlyPrivate = lowerArgs.includes('pv') || lowerArgs.includes('privado') || lowerArgs.includes('segredo');
   const explicitlyGroup = lowerArgs.includes('grupo') || lowerArgs.includes('publico');
 
-  // Decide se a resposta deve ser enviada no privado do usuário
-  const shouldSendPrivate = isGroup && (explicitlyPrivate || (ALWAYS_PRIVATE && !explicitlyGroup));
+  // Identifica o chat pessoal do dono do bot
+  const ownerJid = getOwnerJid(sock, msg);
+  const isAlreadyPrivateChat = remoteJid === ownerJid;
 
-  // Define o destino da mensagem: se privado, envia para a conversa pessoal do usuário
-  const destinationJid = shouldSendPrivate ? getOwnerJid(sock, msg) : remoteJid;
+  // Decide se a resposta deve ser desviada para o seu privado
+  // Funciona tanto em GRUPOS quanto em CONVERSAS COM OUTRAS PESSOAS!
+  const shouldSendPrivate =
+    !isAlreadyPrivateChat &&
+    (explicitlyPrivate || (isGroup && ALWAYS_PRIVATE && !explicitlyGroup));
 
-  // Argumentos limpos (removendo as flags de privacidade para não atrapalhar o comando)
+  // O destino real da resposta: se privado, manda EXCLUSIVAMENTE para você
+  const destinationJid = shouldSendPrivate ? ownerJid : remoteJid;
+
+  // Argumentos limpos
   const cleanArgs = allArgs.slice(1).filter((a) => !['pv', 'privado', 'segredo', 'grupo', 'publico'].includes(a.toLowerCase()));
 
-  // Notificação discreta no grupo quando a resposta for desviada para o privado
-  const notifyGroupAboutPrivate = async () => {
-    if (shouldSendPrivate && isGroup) {
-      await sock.sendMessage(remoteJid, { text: `🤫 _Enviei a resposta no seu privado em segredo!_` });
+  // 👻 MODO FANTASMA TOTAL:
+  // Se for privado, apagamos o comando do chat de origem para não deixar rastros!
+  if (shouldSendPrivate && msg.key.fromMe) {
+    try {
+      await sock.sendMessage(remoteJid, { delete: msg.key });
+    } catch {
+      // ignora caso o WhatsApp não permita deletar
     }
-  };
+  }
+
+  // Identificador do chat para você saber de onde veio o resumo
+  const chatContextLabel = isGroup ? '👥 Grupo' : `👤 Conversa com ${senderName}`;
 
   // COMANDO 1: !resumo [n] [pv]
   if (command === 'resumo') {
@@ -199,10 +211,9 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       return;
     }
 
-    await notifyGroupAboutPrivate();
-
+    // Feedback enviado SOMENTE no destino (nunca no chat de origem se for privado!)
     await sock.sendMessage(destinationJid, {
-      text: `⏳ _Consultando ${recentMessages.length} mensagens do grupo e gerando resumo com Gemini AI..._`,
+      text: `⏳ _Consultando ${recentMessages.length} mensagens de [${chatContextLabel}] e gerando resumo com Gemini AI..._`,
     });
 
     try {
@@ -212,7 +223,11 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       // Salva o resumo no banco SQLite
       appDatabase.saveSummary(remoteJid, summaryResult);
 
-      const responseMessage = formatSummaryForWhatsApp(summaryResult);
+      let responseMessage = formatSummaryForWhatsApp(summaryResult);
+      if (shouldSendPrivate) {
+        responseMessage = `👻 *[MODO FANTASMA - ${chatContextLabel}]*\n\n` + responseMessage;
+      }
+
       await sock.sendMessage(destinationJid, { text: responseMessage });
     } catch (error: any) {
       console.error('Erro ao gerar resumo:', error);
@@ -228,7 +243,7 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 
     if (!question) {
       await sock.sendMessage(destinationJid, {
-        text: `💡 *Como usar:* Digite \`${COMMAND_PREFIX}pergunta <sua dúvida>\` (adicione \`pv\` se quiser no privado).\nExemplo: \`${COMMAND_PREFIX}pergunta pv Qual o horário da reunião?\``,
+        text: `💡 *Como usar:* Digite \`${COMMAND_PREFIX}pergunta <sua dúvida>\` (adicione \`pv\` para receber no privado).\nExemplo: \`${COMMAND_PREFIX}pergunta pv Qual o horário da reunião?\``,
       });
       return;
     }
@@ -236,22 +251,24 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
     const recentMessages = appDatabase.getRecentMessages(remoteJid, 100);
     if (recentMessages.length === 0) {
       await sock.sendMessage(destinationJid, {
-        text: `⚠️ Nenhuma mensagem encontrada no banco SQLite desta conversa para responder sua pergunta.`,
+        text: `⚠️ Nenhuma mensagem encontrada no banco SQLite de [${chatContextLabel}] para responder sua pergunta.`,
       });
       return;
     }
 
-    await notifyGroupAboutPrivate();
-
     await sock.sendMessage(destinationJid, {
-      text: `🔍 _Consultando histórico no SQLite para responder sua dúvida..._`,
+      text: `🔍 _Consultando histórico de [${chatContextLabel}] para responder sua dúvida..._`,
     });
 
     try {
       const formattedChat = appDatabase.formatForAI(recentMessages);
       const answer = await answerChatQuestion(formattedChat, question);
 
-      const reply = `❓ *Pergunta:* ${question}\n\n💡 *Resposta da IA:*\n${answer}\n\n_Baseado no histórico do grupo_ 🗄️🤖`;
+      let reply = `❓ *Pergunta:* ${question}\n\n💡 *Resposta da IA:*\n${answer}\n\n_Baseado no histórico de [${chatContextLabel}]_ 🗄️🤖`;
+      if (shouldSendPrivate) {
+        reply = `👻 *[MODO FANTASMA - ${chatContextLabel}]*\n\n` + reply;
+      }
+
       await sock.sendMessage(destinationJid, { text: reply });
     } catch (error: any) {
       console.error('Erro ao responder pergunta:', error);
@@ -272,13 +289,11 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       return;
     }
 
-    await notifyGroupAboutPrivate();
-
     const matches = appDatabase.searchMessages(remoteJid, query, 5);
 
     if (matches.length === 0) {
       await sock.sendMessage(destinationJid, {
-        text: `🔍 Nenhuma mensagem encontrada com o termo "${query}" no banco SQLite desta conversa.`,
+        text: `🔍 Nenhuma mensagem encontrada com o termo "${query}" no banco SQLite de [${chatContextLabel}].`,
       });
       return;
     }
@@ -295,9 +310,12 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       })
       .join('\n\n');
 
-    await sock.sendMessage(destinationJid, {
-      text: `🗄️ *MENSAGENS ENCONTRADAS ("${query}"):*\n\n${resultados}`,
-    });
+    let msgText = `🗄️ *MENSAGENS ENCONTRADAS EM [${chatContextLabel}] ("${query}"):*\n\n${resultados}`;
+    if (shouldSendPrivate) {
+      msgText = `👻 *[MODO FANTASMA]*\n\n` + msgText;
+    }
+
+    await sock.sendMessage(destinationJid, { text: msgText });
   }
 
   // COMANDO 4: !historico [pv]
@@ -306,15 +324,17 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 
     if (!last) {
       await sock.sendMessage(destinationJid, {
-        text: `ℹ️ Nenhum resumo anterior foi encontrado no banco de dados para esta conversa. Use \`${COMMAND_PREFIX}resumo\` primeiro!`,
+        text: `ℹ️ Nenhum resumo anterior foi encontrado no banco de dados para [${chatContextLabel}]. Use \`${COMMAND_PREFIX}resumo\` primeiro!`,
       });
       return;
     }
 
-    await notifyGroupAboutPrivate();
-
     const dataFormatada = last.date.toLocaleString('pt-BR');
-    const msgFormatted = `📑 *ÚLTIMO RESUMO ARQUIVADO* (Gerado em ${dataFormatada}):\n\n` + formatSummaryForWhatsApp(last.summary);
+    let msgFormatted = `📑 *ÚLTIMO RESUMO ARQUIVADO DE [${chatContextLabel}]* (Gerado em ${dataFormatada}):\n\n` + formatSummaryForWhatsApp(last.summary);
+
+    if (shouldSendPrivate) {
+      msgFormatted = `👻 *[MODO FANTASMA]*\n\n` + msgFormatted;
+    }
 
     await sock.sendMessage(destinationJid, { text: msgFormatted });
   }
@@ -331,10 +351,8 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       return;
     }
 
-    await notifyGroupAboutPrivate();
-
     await sock.sendMessage(destinationJid, {
-      text: `🎧 _Baixando áudio e enviando para o Gemini transcrever... Aguarde alguns segundos!_`,
+      text: `🎧 _Baixando áudio de [${chatContextLabel}] e enviando para o Gemini transcrever... Aguarde!_`,
     });
 
     try {
@@ -359,7 +377,11 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       const mimeType = quotedMsg?.audioMessage?.mimetype || 'audio/ogg; codecs=opus';
 
       const audioResult = await transcribeAndSummarizeAudio(base64Audio, mimeType);
-      const replyMessage = formatAudioSummaryForWhatsApp(audioResult);
+      let replyMessage = formatAudioSummaryForWhatsApp(audioResult);
+
+      if (shouldSendPrivate) {
+        replyMessage = `👻 *[MODO FANTASMA - ${chatContextLabel}]*\n\n` + replyMessage;
+      }
 
       await sock.sendMessage(destinationJid, { text: replyMessage });
     } catch (error: any) {
@@ -372,13 +394,13 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 
   // COMANDO 6: !ajuda
   else if (command === 'ajuda') {
-    const helpText = `🤖 *WhatsApp AI Summarizer - Comandos & Modos de Privacidade*
+    const helpText = `🤖 *WhatsApp AI Summarizer - Comandos & Privacidade Total*
 
 • \`${COMMAND_PREFIX}resumo [n]\`
-  Gera resumo e envia no próprio grupo.
+  Gera resumo e responde no próprio chat.
 
-• \`${COMMAND_PREFIX}resumo pv [n]\` (ou \`privado\`)
-  👻 *Modo Fantasma:* Gera o resumo do grupo e envia no seu PRIVADO em segredo!
+• \`${COMMAND_PREFIX}resumo pv [n]\`
+  👻 *Modo Fantasma:* Gera o resumo e envia SOMENTE no seu privado (zero mensagem na outra conversa).
 
 • \`${COMMAND_PREFIX}pergunta [pv] <dúvida>\`
   Responde dúvidas sobre o histórico (adicione \`pv\` para receber no privado).
@@ -404,7 +426,7 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
   // COMANDO 7: !limpar
   else if (command === 'limpar') {
     appDatabase.clearChat(remoteJid);
-    await sock.sendMessage(destinationJid, { text: `🧹 Histórico desta conversa apagado do banco SQLite com sucesso!` });
+    await sock.sendMessage(destinationJid, { text: `🧹 Histórico de [${chatContextLabel}] apagado do banco SQLite com sucesso!` });
   }
 }
 
