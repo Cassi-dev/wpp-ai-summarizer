@@ -75,7 +75,7 @@ graph LR
 
 ### 1. Clonar o repositório
 ```bash
-git clone https://github.com/SEU_USUARIO/wpp-ai-summarizer.git
+git clone https://github.com/Cassi-dev/wpp-ai-summarizer.git
 cd wpp-ai-summarizer
 ```
 
