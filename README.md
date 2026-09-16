@@ -2,7 +2,7 @@
 
 # 🤖 WhatsApp AI Summarizer + SQLite
 
-**Monitoramento inteligente de grupos e conversas do WhatsApp com resumos estruturados via Google Gemini AI, persistência local com SQLite e Modo Fantasma (respostas no privado).**
+**Monitoramento inteligente de grupos e conversas do WhatsApp com resumos estruturados via Google Gemini AI, persistência local com SQLite e Gatilho Invisível por Reação de Emoji (🧠).**
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)
@@ -20,7 +20,7 @@ Em grupos movimentados de trabalho, estudos ou condomínio, dezenas de mensagens
 
 1. **Persistência em Banco SQLite Local:** Todas as mensagens são salvas em disco de forma contínua e rápida (com índices e modo WAL), permitindo consultas históricas mesmo após reiniciar o computador.
 2. **IA Multimodal e Estruturada (Gemini 3.6 Flash):** Geração de resumos executivos com JSON Schema estrito, respostas pontuais sobre o histórico da conversa e transcrição de áudios sem precisar escutá-los.
-3. **👻 Modo Fantasma (Privacidade Máxima):** Permite ler resumos e respostas no seu WhatsApp privado em segredo, sem poluir o grupo e sem que ninguém saiba que você usou IA.
+3. **🧠 Gatilho Invisível (Modo Fantasma por Reação):** Reaja com o emoji 🧠 a qualquer mensagem de qualquer chat para receber o resumo no seu privado com zero mensagens no grupo e sem deixar rastros!
 4. **Segurança e Privacidade:** O banco de dados e as credenciais ficam 100% locais no computador do usuário, protegidos por `.gitignore`.
 
 ---
@@ -29,23 +29,24 @@ Em grupos movimentados de trabalho, estudos ou condomínio, dezenas de mensagens
 
 ```mermaid
 graph TD
-    User[WhatsApp / Celular] -->|1. Mensagens recebidas no Grupo| Baileys[Baileys WebSocket Client]
+    User[WhatsApp / Celular] -->|1. Mensagens recebidas| Baileys[Baileys WebSocket Client]
     Baileys -->|Grava em disco instantaneamente| SQLite[(Banco SQLite Local: database.sqlite)]
     
-    User -->|!resumo pv| Baileys
+    User -->|Reage com emoji 🧠 em mensagem do grupo| Baileys
     Baileys -->|Consulta histórico no SQLite| SQLite
-    SQLite -->|Mensagens estruturadas| Gemini[Gemini 3.6 Flash: Structured Output]
+    SQLite -->|Mensagens do chat| Gemini[Gemini 3.6 Flash: Structured Output]
     Gemini -->|JSON com tópicos, decisões e urgência| Baileys
     
-    Baileys -->|Notificação discreta no grupo| GroupChat[Chat do Grupo: 🤫 Enviei no privado]
-    Baileys -->|Entrega o resumo completo| PrivateChat[Seu WhatsApp Privado: 📑 Resumo Completo]
+    Baileys -->|Entrega o resumo em silêncio| PrivateChat[Seu WhatsApp Privado: 📑 Resumo Completo]
+    Note[No grupo: ZERO mensagens enviadas, ZERO mensagens apagadas!]
 ```
 
 ---
 
 ## ✨ Funcionalidades Principais
 
-* **👻 Modo Fantasma (`!resumo pv` ou `!pergunta pv`):** Desvia a resposta do robô para o seu chat privado pessoal, mantendo o grupo silencioso e discreto.
+* **🧠 Gatilho Invisível por Emoji (Reação):** Reaja com 🧠 a qualquer mensagem e o resumo daquele chat é entregue na sua conversa com você mesmo. Ninguém no grupo vê absolutamente nada!
+* **👻 Modo Fantasma por Comando (`!resumo pv` ou `!pergunta pv`):** Desvia a resposta do robô para o seu chat privado pessoal sem avisos nem mensagens apagadas.
 * **🗄️ Banco de Dados SQLite Local:** Armazena todas as mensagens com índices de alta performance e modo WAL.
 * **🔍 Pesquisa Histórica (`!buscar [pv] <palavra>`):** Encontra mensagens antigas no banco SQLite com data e autor original.
 * **🎧 Transcrição e Resumo de Áudio (`!ouvir [pv]`):** Responda a qualquer áudio com `!ouvir` para o robô transcrever o conteúdo e resumir os pontos principais via Gemini multimodal.
@@ -60,7 +61,7 @@ graph TD
 | Tecnologia / Conceito | Onde e Como foi Usado |
 | :--- | :--- |
 | **Node.js & TypeScript** | Tipagem estrita com `NodeNext`, garantindo robustez e autocompletion em todo o fluxo de dados. |
-| **Roteamento de Mensagens & Privacidade** | Desvio condicional de fluxo de saída (Group JID vs Private User JID) para o Modo Fantasma. |
+| **Gatilhos por Reações de Mensagem (Reactions)** | Escuta de eventos `reactionMessage` para acionamento invisível de fluxos de IA. |
 | **SQLite (better-sqlite3)** | Banco de dados relacional embarcado em arquivo local com modo WAL e índices compostos. |
 | **IA Multimodal (Áudio + Texto)** | Envio de buffers de áudio em Base64 diretamente para o Gemini 3.6 Flash para transcrição instantânea. |
 | **Event-Driven Architecture** | Escuta reativa de eventos assíncronos (`messages.upsert`, `connection.update`) em vez de polling repetitivo. |
@@ -102,19 +103,17 @@ npm run dev
 
 ---
 
-## 🎮 Lista Completa de Comandos
+## 🎮 Formas de Usar no WhatsApp
 
-| Comando | O que faz | Modo de Exibição |
+| Ação | O que acontece | Onde a resposta aparece |
 | :--- | :--- | :--- |
-| `!resumo [n]` | Resume as últimas mensagens da conversa | Responde no grupo |
-| `!resumo pv [n]` | 👻 Resume as conversas do grupo e manda no seu **PRIVADO** | Privado (Segredo) |
-| `!pergunta <dúvida>` | Pergunta pontual sobre o histórico da conversa | Responde no grupo |
-| `!pergunta pv <dúvida>` | 👻 Responde sua dúvida no seu **PRIVADO** | Privado (Segredo) |
-| `!buscar [pv] <palavra>` | Pesquisa mensagens antigas arquivadas no banco SQLite | Grupo ou Privado |
-| `!historico [pv]` | Exibe o último resumo gerado sem gastar cota de IA | Grupo ou Privado |
-| `!ouvir [pv]` | Responda a um áudio com este comando para transcrever | Grupo ou Privado |
-| `!limpar` | Apaga o histórico do banco de dados desta conversa | Local |
-| `!ajuda` | Exibe o menu com todos os comandos disponíveis | Atual |
+| **Reagir com 🧠 em qualquer mensagem** | 🧠 **Gatilho Invisível:** Resume a conversa discretamente | **Somente no seu PRIVADO** |
+| `!resumo [n]` | Resume as últimas mensagens da conversa | No próprio chat/grupo |
+| `!resumo pv [n]` | 👻 Resume a conversa e manda no seu privado | **Somente no seu PRIVADO** |
+| `!pergunta pv <dúvida>` | 👻 Responde sua dúvida no seu privado | **Somente no seu PRIVADO** |
+| `!buscar [pv] <palavra>` | Pesquisa mensagens antigas no banco SQLite | No chat ou privado |
+| `!ouvir [pv]` | Transcreve e resume o áudio citado | No chat ou privado |
+| `!ajuda` | Exibe o menu com todos os comandos | No chat atual |
 
 ---
 
