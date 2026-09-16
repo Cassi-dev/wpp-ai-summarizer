@@ -1,0 +1,35 @@
+{
+  "name": "wpp-ai-summarizer",
+  "version": "1.0.0",
+  "description": "Bot inteligente em Node.js e TypeScript que monitora conversas do WhatsApp e gera resumos estruturados com a API do Gemini.",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "ai",
+    "gemini",
+    "automation",
+    "summarizer",
+    "typescript"
+  ],
+  "author": "Cassiano",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^2.22.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "dotenv": "^17.4.2",
+    "pino": "^10.3.1",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3",
+    "@types/qrcode-terminal": "^0.12.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
