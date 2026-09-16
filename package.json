@@ -5,7 +5,7 @@
   "description": "Bot inteligente em Node.js e TypeScript que monitora conversas do WhatsApp e gera resumos estruturados com a API do Gemini.",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },

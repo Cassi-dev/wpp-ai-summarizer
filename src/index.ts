@@ -26,8 +26,10 @@ async function startWhatsAppBot() {
   // 2. Criação do Socket de Conexão com o WhatsApp Web
   const sock = makeWASocket({
     auth: state,
-    printQRInTerminal: false, // Vamos imprimir manualmente de forma controlada
-    logger: pino({ level: 'silent' }), // Silencia logs internos do baileys para o terminal ficar limpo
+    printQRInTerminal: false,
+    logger: pino({ level: 'silent' }),
+    browser: ['Windows', 'Chrome', '122.0.6261.129'],
+    syncFullHistory: false, // Foco em mensagens em tempo real, sem puxar anos de histórico
   });
 
   // 3. Monitoramento do Status da Conexão e Exibição do QR Code
@@ -43,15 +45,16 @@ async function startWhatsAppBot() {
     }
 
     if (connection === 'close') {
-      const shouldReconnect =
-        (lastDisconnect?.error as any)?.output?.statusCode !== DisconnectReason.loggedOut;
+      const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+      const isLoggedOut = statusCode === DisconnectReason.loggedOut;
 
-      console.log('⚠️ Conexão encerrada. Reconectando...', { shouldReconnect });
-
-      if (shouldReconnect) {
-        startWhatsAppBot();
+      if (isLoggedOut) {
+        console.log('❌ Sessão desconectada pelo celular. Execute novamente para escanear novo QR Code.');
       } else {
-        console.log('❌ Sessão desconectada. Execute novamente para escanear novo QR Code.');
+        console.log(`⚠️ Conexão oscilou (código: ${statusCode || 'desconhecido'}). Reconectando em 3s...`);
+        setTimeout(() => {
+          startWhatsAppBot();
+        }, 3000);
       }
     } else if (connection === 'open') {
       console.log('\n✅ SUCESSO: WhatsApp Conectado e Monitorando Mensagens!');
