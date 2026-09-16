@@ -1,6 +1,7 @@
 import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
+  jidNormalizedUser,
   useMultiFileAuthState,
   WAMessage,
 } from '@whiskeysockets/baileys';
@@ -19,6 +20,21 @@ import { ChatMessage } from './types.js';
 
 dotenv.config();
 
+// ESCUDO CONTRA QUEDAS: Evita que erros temporários de criptografia (Signal) derrubem o processo
+process.on('uncaughtException', (err: any) => {
+  if (err?.message?.includes('Key used already') || err?.message?.includes('Session error') || err?.message?.includes('decrypt')) {
+    return; // Ignora dessincronizações passageiras de chaves antigas
+  }
+  console.error('⚠️ Aviso do sistema (ignorado para não derrubar o bot):', err.message);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  if (reason?.message?.includes('Key used already') || reason?.message?.includes('Session error') || reason?.message?.includes('decrypt')) {
+    return;
+  }
+  console.error('⚠️ Aviso assíncrono (ignorado para não derrubar o bot):', reason?.message || reason);
+});
+
 const COMMAND_PREFIX = process.env.COMMAND_PREFIX || '!';
 const ONLY_OWNER = process.env.ONLY_OWNER !== 'false'; // Padrão: apenas você pode comandar o bot
 const ALWAYS_PRIVATE = process.env.ALWAYS_PRIVATE === 'true'; // Se true, sempre manda no privado quando em grupos
@@ -32,14 +48,12 @@ const ALLOWED_NUMBERS = (process.env.ALLOWED_NUMBERS || '')
  */
 function getOwnerJid(sock: any, msg: WAMessage): string {
   if (sock.user?.id) {
-    const cleanNumber = sock.user.id.split(':')[0].replace(/[^0-9]/g, '');
-    return `${cleanNumber}@s.whatsapp.net`;
+    return jidNormalizedUser(sock.user.id);
   }
   if (msg.key.participant) {
-    const cleanNumber = msg.key.participant.split(':')[0].replace(/[^0-9]/g, '');
-    return `${cleanNumber}@s.whatsapp.net`;
+    return jidNormalizedUser(msg.key.participant);
   }
-  return msg.key.remoteJid || '';
+  return jidNormalizedUser(msg.key.remoteJid || '');
 }
 
 /**
@@ -71,6 +85,14 @@ async function startWhatsAppBot() {
     logger: pino({ level: 'silent' }),
     browser: ['Windows', 'Chrome', '122.0.6261.129'],
     syncFullHistory: false, // Foco em mensagens em tempo real
+    getMessage: async (key) => {
+      // Fornece mensagens do banco SQLite para o Baileys resincronizar chaves sem erro de chave já usada
+      const m = appDatabase.getMessageById(key.id || '');
+      if (m) {
+        return { conversation: m.text };
+      }
+      return undefined;
+    },
   });
 
   // 3. Monitoramento do Status da Conexão e Exibição do QR Code
@@ -116,7 +138,11 @@ async function startWhatsAppBot() {
     if (m.type !== 'notify') return;
 
     for (const msg of m.messages) {
-      await handleIncomingMessage(sock, msg);
+      try {
+        await handleIncomingMessage(sock, msg);
+      } catch (err: any) {
+        console.error('⚠️ Erro ao processar mensagem (bot segue vivo):', err.message);
+      }
     }
   });
 }

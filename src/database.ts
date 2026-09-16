@@ -99,6 +99,29 @@ class SQLiteDatabaseManager {
   }
 
   /**
+   * Busca uma mensagem pelo ID específico (necessário para resincronização de chaves do Baileys)
+   */
+  public getMessageById(id: string): ChatMessage | null {
+    const stmt = this.db.prepare(`
+      SELECT id, sender, sender_name as senderName, text, timestamp, is_group as isGroup
+      FROM messages
+      WHERE id = ?
+    `);
+
+    const r = stmt.get(id) as any;
+    if (!r) return null;
+
+    return {
+      id: r.id,
+      sender: r.sender,
+      senderName: r.senderName,
+      text: r.text,
+      timestamp: new Date(r.timestamp),
+      isGroup: Boolean(r.isGroup),
+    };
+  }
+
+  /**
    * Pesquisa mensagens que contenham um termo específico no histórico
    */
   public searchMessages(remoteJid: string, query: string, limit: number = 10): ChatMessage[] {
