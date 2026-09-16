@@ -2,7 +2,7 @@
 
 # 🤖 WhatsApp AI Summarizer
 
-**Monitoramento inteligente de grupos e conversas do WhatsApp com resumos estruturados via Google Gemini AI.**
+**Monitoramento inteligente de grupos e conversas do WhatsApp com resumos estruturados, transcrição de áudios e respostas a dúvidas via Google Gemini AI.**
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)
@@ -15,43 +15,44 @@
 
 ## 📌 Visão Geral do Projeto
 
-Em grupos movimentados de trabalho, estudos ou condomínio, dezenas de mensagens chegam a cada hora. O **WhatsApp AI Summarizer** resolve essa sobrecarga de informação conectando diretamente ao WhatsApp e gerando **resumos executivos imediatos** sob demanda com a API do Gemini.
+Em grupos movimentados de trabalho, estudos ou condomínio, dezenas de mensagens e áudios chegam a cada hora. O **WhatsApp AI Summarizer** resolve essa sobrecarga de informação conectando diretamente ao WhatsApp e gerando **resumos executivos imediatos**, **transcrição de áudios sem precisar ouvi-los** e **respostas para perguntas pontuais sobre o histórico da conversa** via API do Google Gemini.
 
-O diferencial deste projeto não é apenas "gerar texto livre", mas utilizar **Structured Output (JSON Schema)** para classificar assuntos, identificar decisões, listar pendências e avaliar o grau de urgência das conversas.
+O diferencial deste projeto não é apenas "gerar texto livre", mas utilizar **Structured Output (JSON Schema)** e capacidades **Multimodais nativas de áudio** para organizar a comunicação em tempo real.
 
 ---
 
 ## 🏗️ Arquitetura do Sistema
 
 ```mermaid
-graph LR
-    User[Celular / WhatsApp] -.->|Mensagens recebidas| Baileys[Baileys WebSocket Client]
-    Baileys -->|Filtra mensagens de texto| Buffer[Ring Buffer em Memória]
-    User -->|Comando !resumo| Baileys
-    Buffer -->|Últimas N mensagens formatadas| Gemini[Google Gemini 2.5 Flash]
-    Gemini -->|Structured Output JSON Schema| Parser[Formatador de Markdown]
-    Parser -->|Mensagem elegante com badges| Baileys
-    Baileys -->|Envia resumo no chat| User
+graph TD
+    User[WhatsApp / Celular] -->|1. Mensagens de texto| Buffer[Ring Buffer em Memória]
+    User -->|2. Áudio recebido| Media[Download de Áudio Baileys]
+    
+    User -->|!resumo| Buffer
+    Buffer -->|Últimas N mensagens| GeminiText[Gemini 3.6 Flash: Structured Output]
+    GeminiText -->|JSON com tópicos, decisões e urgência| Format1[Formatador de Markdown]
+    Format1 -->|Envia no chat| User
+    
+    User -->|!pergunta sobre o chat| Buffer
+    Buffer -->|Contexto recente + Dúvida| GeminiQA[Gemini 3.6 Flash: Q&A Contextual]
+    GeminiQA -->|Resposta pontual| User
+
+    User -->|!ouvir respondendo a um áudio| Media
+    Media -->|Buffer OGG/Opus Base64| GeminiAudio[Gemini 3.6 Flash: Multimodal Audio]
+    GeminiAudio -->|JSON: Transcrição + Resumo executivo| Format2[Formatador de Áudio]
+    Format2 -->|Envia no chat| User
 ```
 
 ---
 
 ## ✨ Funcionalidades Principais
 
-* **Conexão Direta via QR Code:** Autenticação rápida no terminal via protocolo WebSocket do WhatsApp Web (usando `@whiskeysockets/baileys`).
-* **Persistência de Sessão Segura:** As chaves de autenticação são mantidas localmente na pasta `auth_info/` (devidamente ignoradas no `.gitignore`).
-* **IA com Structured Output:** Utiliza o SDK oficial `@google/genai` com schemas estritos (`responseSchema`), garantindo que o retorno venha sempre com:
-  - 📝 *Visão Geral*
-  - 📌 *Lista de Assuntos*
-  - ✅ *Decisões Tomadas*
-  - ⚠️ *Pendências / Ações*
-  - 🔴/🟡/🟢 *Nível de Urgência (Enum)*
-* **Ring Buffer em Memória:** Armazena apenas as últimas 100 mensagens por conversa para evitar consumo excessivo de memória RAM.
-* **Comandos Simples:**
-  - `!resumo`: Resume as últimas 50 mensagens da conversa.
-  - `!resumo 20`: Define uma quantidade customizada de mensagens.
-  - `!limpar`: Esvazia a memória temporária do chat.
-  - `!ajuda`: Lista todos os comandos disponíveis.
+* **🎧 Transcrição e Resumo de Áudio (`!ouvir`):** Responda a qualquer áudio do WhatsApp com `!ouvir` para o robô baixar a mídia, processar com IA multimodal e devolver o texto transcrito + os pontos principais.
+* **🔍 Perguntas sobre a Conversa (`!pergunta <dúvida>`):** Pergunte qualquer coisa sobre o histórico recente (ex: *"Qual o preço combinado?"*, *"Quem vai levar o documento?"*) e a IA responde direto ao ponto.
+* **📋 Resumo Estruturado com JSON Schema (`!resumo`):** Retorna visão geral, tópicos debatidos, decisões tomadas, pendências e um badge de urgência (🟢 Baixa / 🟡 Média / 🔴 Alta).
+* **🔒 Trava de Segurança Antispam:** Por padrão, apenas você (o dono da conta do WhatsApp) pode acionar comandos nos grupos. Suporta adicionar números permitidos no `.env`.
+* **⚡ Conexão WebSocket Direta:** Sem emuladores pesados de navegador; conexão leve e instantânea via protocolo Baileys.
+* **💾 Ring Buffer em Memória:** Mantém apenas as mensagens mais recentes por chat, evitando consumo desnecessário de memória RAM.
 
 ---
 
@@ -60,9 +61,10 @@ graph LR
 | Tecnologia / Conceito | Onde e Como foi Usado |
 | :--- | :--- |
 | **Node.js & TypeScript** | Tipagem estrita com `NodeNext`, garantindo robustez e autocompletion em todo o fluxo de dados. |
+| **IA Multimodal (Áudio + Texto)** | Envio de buffers de áudio em Base64 diretamente para o Gemini 3.6 Flash para transcrição instantânea. |
 | **Event-Driven Architecture** | Escuta reativa de eventos assíncronos (`messages.upsert`, `connection.update`) em vez de polling repetitivo. |
-| **Ring Buffer (Fila Circular)** | Estrutura de dados em memória para descarte automático de mensagens antigas (`FIFO`). |
 | **Structured Output (LLM)** | Elimina a imprevisibilidade de texto livre através de contratos de dados em JSON Schema. |
+| **Ring Buffer (Fila Circular)** | Estrutura de dados em memória para descarte automático de mensagens antigas (`FIFO`). |
 | **DevSecOps Hygiene** | Proteção contra vazamento de credenciais e tokens através de variáveis de ambiente (`.env`) e `.gitignore` rigoroso. |
 
 ---
@@ -89,6 +91,7 @@ Crie um arquivo `.env` na raiz (baseado no `.env.example`):
 ```env
 GEMINI_API_KEY=sua_chave_do_gemini_aqui
 COMMAND_PREFIX=!
+ONLY_OWNER=true
 ```
 
 ### 4. Iniciar o bot
@@ -99,7 +102,19 @@ npm run dev
 ### 5. Conectar
 1. O terminal exibirá um **QR Code**.
 2. Abra o WhatsApp no celular ➔ toque nos **3 pontos** (ou Configurações) ➔ **Aparelhos Conectados** ➔ **Conectar um aparelho**.
-3. Escaneie o QR Code e pronto! O bot começará a monitorar e responder a `!resumo`.
+3. Escaneie o QR Code e pronto!
+
+---
+
+## 🎮 Lista de Comandos no WhatsApp
+
+| Comando | O que faz | Exemplo |
+| :--- | :--- | :--- |
+| `!resumo [n]` | Resume as conversas recentes daquele chat | `!resumo` ou `!resumo 30` |
+| `!pergunta <dúvida>` | Pergunta pontual sobre o que conversaram | `!pergunta Qual o horário marcado?` |
+| `!ouvir` | Responda a um áudio com este comando para transcrever e resumir | Responda ao áudio com `!ouvir` |
+| `!limpar` | Esvazia o buffer de mensagens recentes daquela conversa | `!limpar` |
+| `!ajuda` | Exibe o menu com todos os comandos disponíveis | `!ajuda` |
 
 ---
 

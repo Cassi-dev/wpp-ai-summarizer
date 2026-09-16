@@ -1,5 +1,6 @@
 import makeWASocket, {
   DisconnectReason,
+  downloadMediaMessage,
   useMultiFileAuthState,
   WAMessage,
 } from '@whiskeysockets/baileys';
@@ -7,12 +8,36 @@ import dotenv from 'dotenv';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { messageBuffer } from './buffer.js';
-import { formatSummaryForWhatsApp, generateChatSummary } from './gemini.js';
+import {
+  answerChatQuestion,
+  formatAudioSummaryForWhatsApp,
+  formatSummaryForWhatsApp,
+  generateChatSummary,
+  transcribeAndSummarizeAudio,
+} from './gemini.js';
 import { ChatMessage } from './types.js';
 
 dotenv.config();
 
 const COMMAND_PREFIX = process.env.COMMAND_PREFIX || '!';
+const ONLY_OWNER = process.env.ONLY_OWNER !== 'false'; // Padrão: apenas você pode comandar o bot
+const ALLOWED_NUMBERS = (process.env.ALLOWED_NUMBERS || '')
+  .split(',')
+  .map((n) => n.trim())
+  .filter(Boolean);
+
+/**
+ * Verifica se quem enviou o comando tem permissão de execução
+ */
+function isAuthorized(msg: WAMessage): boolean {
+  if (msg.key.fromMe) return true; // Sempre autoriza você (dono da conta)
+  if (!ONLY_OWNER) return true; // Se desativou a trava, permite qualquer um
+
+  const sender = msg.key.participant || msg.key.remoteJid || '';
+  const senderNumber = sender.replace(/[^0-9]/g, '');
+
+  return ALLOWED_NUMBERS.some((num) => senderNumber.includes(num));
+}
 
 /**
  * Função principal que inicia o cliente WhatsApp e escuta os eventos
@@ -58,10 +83,11 @@ async function startWhatsAppBot() {
       }
     } else if (connection === 'open') {
       console.log('\n✅ SUCESSO: WhatsApp Conectado e Monitorando Mensagens!');
-      console.log(`🤖 Comandos disponíveis nos seus chats:`);
-      console.log(`   👉 "${COMMAND_PREFIX}resumo"    - Resume as últimas mensagens da conversa`);
-      console.log(`   👉 "${COMMAND_PREFIX}resumo 30" - Resume as últimas 30 mensagens`);
-      console.log(`   👉 "${COMMAND_PREFIX}ajuda"     - Exibe as opções disponíveis\n`);
+      console.log(`🤖 Superpoderes ativos:`);
+      console.log(`   👉 "${COMMAND_PREFIX}resumo"           - Resume as conversas recentes`);
+      console.log(`   👉 "${COMMAND_PREFIX}pergunta <duvida>" - Responde perguntas sobre o chat`);
+      console.log(`   👉 "${COMMAND_PREFIX}ouvir"            - Transcreve áudio (responda a um áudio)`);
+      console.log(`   👉 Trava de segurança: ${ONLY_OWNER ? '🔒 Apenas você tem acesso' : '🌐 Aberto para todos'}\n`);
     }
   });
 
@@ -85,20 +111,18 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
   const remoteJid = msg.key.remoteJid;
   if (!remoteJid || remoteJid === 'status@broadcast') return;
 
-  // Extrai o texto da mensagem (de texto comum ou texto estendido com preview)
+  // Extrai o texto da mensagem (de texto comum ou estendido)
   const text =
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
     msg.message?.imageMessage?.caption ||
     '';
 
-  if (!text || text.trim() === '') return;
-
   const senderName = msg.pushName || 'Usuário';
   const isGroup = remoteJid.endsWith('@g.us');
 
-  // Adiciona ao buffer da conversa (apenas mensagens que não sejam comandos do bot)
-  if (!text.startsWith(COMMAND_PREFIX)) {
+  // Armazena no buffer (apenas se for texto e não for um comando do bot)
+  if (text && !text.startsWith(COMMAND_PREFIX)) {
     const chatMsg: ChatMessage = {
       id: msg.key.id || Math.random().toString(),
       sender: msg.key.participant || remoteJid,
@@ -111,11 +135,20 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
     return;
   }
 
-  // --- TRATAMENTO DE COMANDOS (!resumo, !ajuda) ---
+  // Se a mensagem não tem comando de texto, encerra
+  if (!text.startsWith(COMMAND_PREFIX)) return;
+
+  // --- TRAVA DE SEGURANÇA (Verifica se quem chamou o comando está autorizado) ---
+  if (!isAuthorized(msg)) {
+    console.log(`🚫 Comando bloqueado para usuário não autorizado: ${senderName} (${remoteJid})`);
+    return; // Ignora silenciosamente para não gastar API nem poluir o chat
+  }
+
+  // --- TRATAMENTO DE COMANDOS ---
   const args = text.slice(COMMAND_PREFIX.length).trim().split(/\s+/);
   const command = args[0]?.toLowerCase();
 
-  // COMANDO: !resumo
+  // COMANDO 1: !resumo [n]
   if (command === 'resumo') {
     const limit = args[1] && !isNaN(Number(args[1])) ? Math.min(Number(args[1]), 100) : 50;
     const recentMessages = messageBuffer.getRecentMessages(remoteJid, limit);
@@ -127,7 +160,6 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       return;
     }
 
-    // Feedback visual imediato: avisa que está processando com a IA
     await sock.sendMessage(remoteJid, {
       text: `⏳ _Lendo as últimas ${recentMessages.length} mensagens e gerando resumo inteligente com Gemini AI..._`,
     });
@@ -137,28 +169,125 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       const summaryResult = await generateChatSummary(formattedChat);
       const responseMessage = formatSummaryForWhatsApp(summaryResult);
 
-      // Envia o resumo pronto de volta no WhatsApp
       await sock.sendMessage(remoteJid, { text: responseMessage });
     } catch (error: any) {
-      console.error('Erro ao gerar resumo com Gemini:', error);
+      console.error('Erro ao gerar resumo:', error);
       await sock.sendMessage(remoteJid, {
-        text: `❌ Falha ao processar com IA: ${error.message || 'Verifique a chave GEMINI_API_KEY no arquivo .env'}`,
+        text: `❌ Falha ao processar resumo: ${error.message || 'Erro inesperado'}`,
       });
     }
   }
 
-  // COMANDO: !ajuda
+  // COMANDO 2: !pergunta <dúvida sobre o histórico do chat>
+  else if (command === 'pergunta') {
+    const question = args.slice(1).join(' ').trim();
+
+    if (!question) {
+      await sock.sendMessage(remoteJid, {
+        text: `💡 *Como usar:* Digite \`${COMMAND_PREFIX}pergunta <sua dúvida>\`.\nExemplo: \`${COMMAND_PREFIX}pergunta Qual o horário da reunião?\``,
+      });
+      return;
+    }
+
+    const recentMessages = messageBuffer.getRecentMessages(remoteJid, 50);
+    if (recentMessages.length === 0) {
+      await sock.sendMessage(remoteJid, {
+        text: `⚠️ Nenhuma mensagem recente em memória nesta conversa para responder sua pergunta.`,
+      });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `🔍 _Consultando o histórico de mensagens para responder à sua dúvida..._`,
+    });
+
+    try {
+      const formattedChat = messageBuffer.formatForAI(recentMessages);
+      const answer = await answerChatQuestion(formattedChat, question);
+
+      const reply = `❓ *Pergunta:* ${question}\n\n💡 *Resposta da IA:*\n${answer}\n\n_Baseado nas mensagens recentes desta conversa_ 🤖`;
+      await sock.sendMessage(remoteJid, { text: reply });
+    } catch (error: any) {
+      console.error('Erro ao responder pergunta:', error);
+      await sock.sendMessage(remoteJid, {
+        text: `❌ Erro ao consultar IA: ${error.message || 'Erro inesperado'}`,
+      });
+    }
+  }
+
+  // COMANDO 3: !ouvir (Transcreve e resume o áudio citado)
+  else if (command === 'ouvir' || command === 'audio') {
+    // Verifica se o comando foi enviado como resposta (quote) a um áudio
+    const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const isAudioQuote = Boolean(quotedMsg?.audioMessage);
+
+    if (!isAudioQuote) {
+      await sock.sendMessage(remoteJid, {
+        text: `🎙️ *Como usar:* Responda a qualquer mensagem de áudio digitando \`${COMMAND_PREFIX}ouvir\` para transcrever e resumir o que foi dito sem precisar escutar!`,
+      });
+      return;
+    }
+
+    await sock.sendMessage(remoteJid, {
+      text: `🎧 _Baixando áudio e enviando para o Gemini transcrever... Aguarde alguns segundos!_`,
+    });
+
+    try {
+      // Baixa o buffer binário do áudio citado
+      const audioBuffer = await downloadMediaMessage(
+        {
+          key: {
+            remoteJid,
+            id: msg.message?.extendedTextMessage?.contextInfo?.stanzaId,
+            participant: msg.message?.extendedTextMessage?.contextInfo?.participant,
+          },
+          message: quotedMsg,
+        } as any,
+        'buffer',
+        {},
+        {
+          logger: pino({ level: 'silent' }),
+          reuploadRequest: sock.updateMediaMessage,
+        }
+      );
+
+      const base64Audio = Buffer.from(audioBuffer).toString('base64');
+      const mimeType = quotedMsg?.audioMessage?.mimetype || 'audio/ogg; codecs=opus';
+
+      const audioResult = await transcribeAndSummarizeAudio(base64Audio, mimeType);
+      const replyMessage = formatAudioSummaryForWhatsApp(audioResult);
+
+      await sock.sendMessage(remoteJid, { text: replyMessage });
+    } catch (error: any) {
+      console.error('Erro ao transcrever áudio:', error);
+      await sock.sendMessage(remoteJid, {
+        text: `❌ Falha ao processar o áudio com IA: ${error.message || 'Erro ao decodificar áudio'}`,
+      });
+    }
+  }
+
+  // COMANDO 4: !ajuda
   else if (command === 'ajuda') {
-    const helpText = `🤖 *WhatsApp AI Summarizer - Comandos*\n
-• \`${COMMAND_PREFIX}resumo\` : Gera um resumo estruturado das últimas 50 mensagens desta conversa.
-• \`${COMMAND_PREFIX}resumo 20\` : Resume as últimas 20 mensagens.
-• \`${COMMAND_PREFIX}limpar\` : Limpa a memória das mensagens acumuladas desta conversa.
-• \`${COMMAND_PREFIX}ajuda\` : Exibe esta mensagem de ajuda.`;
+    const helpText = `🤖 *WhatsApp AI Summarizer - Comandos Disponíveis*
+
+• \`${COMMAND_PREFIX}resumo [n]\`
+  Gera resumo com tópicos, decisões, pendências e grau de urgência (padrão: 50 mensagens).
+
+• \`${COMMAND_PREFIX}pergunta <dúvida>\`
+  Faz uma pergunta pontual para a IA sobre o que conversaram recentemente.
+
+• \`${COMMAND_PREFIX}ouvir\`
+  Responda a qualquer áudio com este comando para receber a transcrição e resumo do áudio!
+
+• \`${COMMAND_PREFIX}limpar\`
+  Esvazia a memória temporária de mensagens desta conversa.
+
+🔒 *Segurança:* ${ONLY_OWNER ? 'Apenas o dono da conta tem permissão para disparar comandos.' : 'Comandos abertos para o grupo.'}`;
 
     await sock.sendMessage(remoteJid, { text: helpText });
   }
 
-  // COMANDO: !limpar
+  // COMANDO 5: !limpar
   else if (command === 'limpar') {
     messageBuffer.clear(remoteJid);
     await sock.sendMessage(remoteJid, { text: `🧹 Memória temporária desta conversa limpa com sucesso!` });

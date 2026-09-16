@@ -11,7 +11,7 @@ export interface ChatMessage {
 }
 
 /**
- * Interface que define o Structured Output retornado pelo Gemini
+ * Interface que define o Structured Output do resumo geral retornado pelo Gemini
  */
 export interface SummaryResult {
   assuntos: string[];
@@ -19,4 +19,13 @@ export interface SummaryResult {
   pendencias: string[];
   urgencia: 'baixa' | 'media' | 'alta';
   resumoGeral: string;
+}
+
+/**
+ * Interface que define a resposta da transcrição e resumo de áudio
+ */
+export interface AudioSummaryResult {
+  transcricao: string;
+  resumo: string;
+  pontosChave: string[];
 }
