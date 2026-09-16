@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.env.local
+auth_info
+baileys_auth_info
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+database.sqlite
+.git
+.gitignore
+npm-debug.log*

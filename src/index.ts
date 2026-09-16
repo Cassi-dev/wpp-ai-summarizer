@@ -23,9 +23,28 @@ import {
   transcribeAndSummarizeAudio,
   translateMessage,
 } from './gemini.js';
+import http from 'http';
 import { ChatMessage } from './types.js';
 
 dotenv.config();
+
+// Servidor de Healthcheck para plataformas na nuvem (Railway, Render, Fly.io, Cloud Run)
+const PORT = process.env.PORT || 3000;
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        status: 'online',
+        service: 'WhatsApp AI Summarizer',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+      })
+    );
+  })
+  .listen(PORT, () => {
+    console.log(`🌐 Servidor HTTP de Healthcheck ativo na porta ${PORT}`);
+  });
 
 // ESCUDO CONTRA QUEDAS: Evita que erros temporários de criptografia (Signal) derrubem o processo
 process.on('uncaughtException', (err: any) => {

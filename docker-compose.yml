@@ -1,0 +1,14 @@
+services:
+  wpp-bot:
+    build: .
+    container_name: wpp-ai-summarizer
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persistência da sessão do WhatsApp (não pede QR code após reiniciar)
+      - ./auth_info:/app/auth_info
+      # Persistência do banco de dados SQLite local
+      - ./database.sqlite:/app/database.sqlite
