@@ -7,7 +7,7 @@ import makeWASocket, {
 import dotenv from 'dotenv';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
-import { messageBuffer } from './buffer.js';
+import { appDatabase } from './database.js';
 import {
   answerChatQuestion,
   formatAudioSummaryForWhatsApp,
@@ -43,9 +43,9 @@ function isAuthorized(msg: WAMessage): boolean {
  * Função principal que inicia o cliente WhatsApp e escuta os eventos
  */
 async function startWhatsAppBot() {
-  console.log('\n🚀 Iniciando WhatsApp AI Summarizer...');
+  console.log('\n🚀 Iniciando WhatsApp AI Summarizer (com SQLite Persistente)...');
 
-  // 1. Gerenciamento de Estado da Sessão (salva as credenciais em disco para não pedir QR code toda vez)
+  // 1. Gerenciamento de Estado da Sessão
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
 
   // 2. Criação do Socket de Conexão com o WhatsApp Web
@@ -54,7 +54,7 @@ async function startWhatsAppBot() {
     printQRInTerminal: false,
     logger: pino({ level: 'silent' }),
     browser: ['Windows', 'Chrome', '122.0.6261.129'],
-    syncFullHistory: false, // Foco em mensagens em tempo real, sem puxar anos de histórico
+    syncFullHistory: false, // Foco em mensagens em tempo real
   });
 
   // 3. Monitoramento do Status da Conexão e Exibição do QR Code
@@ -82,11 +82,13 @@ async function startWhatsAppBot() {
         }, 3000);
       }
     } else if (connection === 'open') {
-      console.log('\n✅ SUCESSO: WhatsApp Conectado e Monitorando Mensagens!');
+      console.log('\n✅ SUCESSO: WhatsApp Conectado e Monitorando com Banco SQLite!');
       console.log(`🤖 Superpoderes ativos:`);
-      console.log(`   👉 "${COMMAND_PREFIX}resumo"           - Resume as conversas recentes`);
+      console.log(`   👉 "${COMMAND_PREFIX}resumo"           - Resume as conversas recentes salvas no SQLite`);
       console.log(`   👉 "${COMMAND_PREFIX}pergunta <duvida>" - Responde perguntas sobre o chat`);
-      console.log(`   👉 "${COMMAND_PREFIX}ouvir"            - Transcreve áudio (responda a um áudio)`);
+      console.log(`   👉 "${COMMAND_PREFIX}buscar <palavra>" - Pesquisa mensagens antigas no banco SQLite`);
+      console.log(`   👉 "${COMMAND_PREFIX}historico"        - Exibe o último resumo gerado (sem gastar cota)`);
+      console.log(`   👉 "${COMMAND_PREFIX}ouvir"            - Transcreve áudios com Gemini`);
       console.log(`   👉 Trava de segurança: ${ONLY_OWNER ? '🔒 Apenas você tem acesso' : '🌐 Aberto para todos'}\n`);
     }
   });
@@ -121,7 +123,7 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
   const senderName = msg.pushName || 'Usuário';
   const isGroup = remoteJid.endsWith('@g.us');
 
-  // Armazena no buffer (apenas se for texto e não for um comando do bot)
+  // Grava no Banco SQLite automaticamente (se for texto e não for comando)
   if (text && !text.startsWith(COMMAND_PREFIX)) {
     const chatMsg: ChatMessage = {
       id: msg.key.id || Math.random().toString(),
@@ -131,17 +133,17 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       timestamp: new Date((msg.messageTimestamp as number) * 1000),
       isGroup,
     };
-    messageBuffer.addMessage(remoteJid, chatMsg);
+    appDatabase.saveMessage(remoteJid, chatMsg);
     return;
   }
 
   // Se a mensagem não tem comando de texto, encerra
   if (!text.startsWith(COMMAND_PREFIX)) return;
 
-  // --- TRAVA DE SEGURANÇA (Verifica se quem chamou o comando está autorizado) ---
+  // --- TRAVA DE SEGURANÇA ---
   if (!isAuthorized(msg)) {
     console.log(`🚫 Comando bloqueado para usuário não autorizado: ${senderName} (${remoteJid})`);
-    return; // Ignora silenciosamente para não gastar API nem poluir o chat
+    return;
   }
 
   // --- TRATAMENTO DE COMANDOS ---
@@ -150,25 +152,28 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 
   // COMANDO 1: !resumo [n]
   if (command === 'resumo') {
-    const limit = args[1] && !isNaN(Number(args[1])) ? Math.min(Number(args[1]), 100) : 50;
-    const recentMessages = messageBuffer.getRecentMessages(remoteJid, limit);
+    const limit = args[1] && !isNaN(Number(args[1])) ? Math.min(Number(args[1]), 200) : 50;
+    const recentMessages = appDatabase.getRecentMessages(remoteJid, limit);
 
     if (recentMessages.length < 3) {
       await sock.sendMessage(remoteJid, {
-        text: `⚠️ Ainda não acumulei mensagens suficientes nesta conversa para gerar um resumo (mínimo de 3 mensagens necessárias). Converse mais um pouco e tente de novo!`,
+        text: `⚠️ Ainda não há mensagens suficientes gravadas no SQLite para gerar um resumo (mínimo de 3 mensagens). Converse um pouco e tente de novo!`,
       });
       return;
     }
 
     await sock.sendMessage(remoteJid, {
-      text: `⏳ _Lendo as últimas ${recentMessages.length} mensagens e gerando resumo inteligente com Gemini AI..._`,
+      text: `⏳ _Consultando ${recentMessages.length} mensagens do banco SQLite e gerando resumo com Gemini AI..._`,
     });
 
     try {
-      const formattedChat = messageBuffer.formatForAI(recentMessages);
+      const formattedChat = appDatabase.formatForAI(recentMessages);
       const summaryResult = await generateChatSummary(formattedChat);
-      const responseMessage = formatSummaryForWhatsApp(summaryResult);
 
+      // Salva o resumo no banco SQLite para consulta futura
+      appDatabase.saveSummary(remoteJid, summaryResult);
+
+      const responseMessage = formatSummaryForWhatsApp(summaryResult);
       await sock.sendMessage(remoteJid, { text: responseMessage });
     } catch (error: any) {
       console.error('Erro ao gerar resumo:', error);
@@ -189,23 +194,23 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
       return;
     }
 
-    const recentMessages = messageBuffer.getRecentMessages(remoteJid, 50);
+    const recentMessages = appDatabase.getRecentMessages(remoteJid, 100);
     if (recentMessages.length === 0) {
       await sock.sendMessage(remoteJid, {
-        text: `⚠️ Nenhuma mensagem recente em memória nesta conversa para responder sua pergunta.`,
+        text: `⚠️ Nenhuma mensagem encontrada no banco SQLite desta conversa para responder sua pergunta.`,
       });
       return;
     }
 
     await sock.sendMessage(remoteJid, {
-      text: `🔍 _Consultando o histórico de mensagens para responder à sua dúvida..._`,
+      text: `🔍 _Consultando histórico no SQLite para responder sua dúvida..._`,
     });
 
     try {
-      const formattedChat = messageBuffer.formatForAI(recentMessages);
+      const formattedChat = appDatabase.formatForAI(recentMessages);
       const answer = await answerChatQuestion(formattedChat, question);
 
-      const reply = `❓ *Pergunta:* ${question}\n\n💡 *Resposta da IA:*\n${answer}\n\n_Baseado nas mensagens recentes desta conversa_ 🤖`;
+      const reply = `❓ *Pergunta:* ${question}\n\n💡 *Resposta da IA:*\n${answer}\n\n_Baseado no histórico salvo no SQLite_ 🗄️🤖`;
       await sock.sendMessage(remoteJid, { text: reply });
     } catch (error: any) {
       console.error('Erro ao responder pergunta:', error);
@@ -215,15 +220,68 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
     }
   }
 
-  // COMANDO 3: !ouvir (Transcreve e resume o áudio citado)
+  // COMANDO 3: !buscar <palavra> (Pesquisa rápida no banco SQLite)
+  else if (command === 'buscar') {
+    const query = args.slice(1).join(' ').trim();
+
+    if (!query) {
+      await sock.sendMessage(remoteJid, {
+        text: `🔍 *Como usar:* Digite \`${COMMAND_PREFIX}buscar <palavra>\` para localizar mensagens antigas no banco SQLite.`,
+      });
+      return;
+    }
+
+    const matches = appDatabase.searchMessages(remoteJid, query, 5);
+
+    if (matches.length === 0) {
+      await sock.sendMessage(remoteJid, {
+        text: `🔍 Nenhuma mensagem encontrada com o termo "${query}" no banco SQLite.`,
+      });
+      return;
+    }
+
+    const resultados = matches
+      .map((m) => {
+        const data = m.timestamp.toLocaleString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        return `📅 [${data}] *${m.senderName}*: "${m.text}"`;
+      })
+      .join('\n\n');
+
+    await sock.sendMessage(remoteJid, {
+      text: `🗄️ *MENSAGENS ENCONTRADAS NO SQLITE ("${query}"):*\n\n${resultados}`,
+    });
+  }
+
+  // COMANDO 4: !historico (Recupera o último resumo sem gastar cota da IA)
+  else if (command === 'historico') {
+    const last = appDatabase.getLastSummary(remoteJid);
+
+    if (!last) {
+      await sock.sendMessage(remoteJid, {
+        text: `ℹ️ Nenhum resumo anterior foi encontrado no banco de dados para esta conversa. Use \`${COMMAND_PREFIX}resumo\` primeiro!`,
+      });
+      return;
+    }
+
+    const dataFormatada = last.date.toLocaleString('pt-BR');
+    const msg = `📑 *ÚLTIMO RESUMO ARQUIVADO* (Gerado em ${dataFormatada}):\n\n` + formatSummaryForWhatsApp(last.summary);
+
+    await sock.sendMessage(remoteJid, { text: msg });
+  }
+
+  // COMANDO 5: !ouvir (Transcreve e resume o áudio citado)
   else if (command === 'ouvir' || command === 'audio') {
-    // Verifica se o comando foi enviado como resposta (quote) a um áudio
     const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     const isAudioQuote = Boolean(quotedMsg?.audioMessage);
 
     if (!isAudioQuote) {
       await sock.sendMessage(remoteJid, {
-        text: `🎙️ *Como usar:* Responda a qualquer mensagem de áudio digitando \`${COMMAND_PREFIX}ouvir\` para transcrever e resumir o que foi dito sem precisar escutar!`,
+        text: `🎙️ *Como usar:* Responda a qualquer mensagem de áudio digitando \`${COMMAND_PREFIX}ouvir\` para transcrever e resumir o que foi dito!`,
       });
       return;
     }
@@ -233,7 +291,6 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
     });
 
     try {
-      // Baixa o buffer binário do áudio citado
       const audioBuffer = await downloadMediaMessage(
         {
           key: {
@@ -266,31 +323,38 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
     }
   }
 
-  // COMANDO 4: !ajuda
+  // COMANDO 6: !ajuda
   else if (command === 'ajuda') {
-    const helpText = `🤖 *WhatsApp AI Summarizer - Comandos Disponíveis*
+    const helpText = `🤖 *WhatsApp AI Summarizer + SQLite - Comandos*
 
 • \`${COMMAND_PREFIX}resumo [n]\`
-  Gera resumo com tópicos, decisões, pendências e grau de urgência (padrão: 50 mensagens).
+  Gera resumo das últimas mensagens do banco SQLite (padrão: 50).
 
 • \`${COMMAND_PREFIX}pergunta <dúvida>\`
-  Faz uma pergunta pontual para a IA sobre o que conversaram recentemente.
+  Responde dúvidas sobre o histórico da conversa com IA.
+
+• \`${COMMAND_PREFIX}buscar <palavra>\`
+  Pesquisa rápida no banco SQLite de mensagens anteriores.
+
+• \`${COMMAND_PREFIX}historico\`
+  Exibe o último resumo gerado sem gastar cota de IA.
 
 • \`${COMMAND_PREFIX}ouvir\`
-  Responda a qualquer áudio com este comando para receber a transcrição e resumo do áudio!
+  Responda a um áudio com este comando para transcrever e resumir.
 
 • \`${COMMAND_PREFIX}limpar\`
-  Esvazia a memória temporária de mensagens desta conversa.
+  Apaga o histórico do banco de dados desta conversa.
 
-🔒 *Segurança:* ${ONLY_OWNER ? 'Apenas o dono da conta tem permissão para disparar comandos.' : 'Comandos abertos para o grupo.'}`;
+🗄️ *Persistência:* Banco de dados SQLite ativo com WAL mode.
+🔒 *Segurança:* ${ONLY_OWNER ? 'Apenas você tem permissão.' : 'Comandos liberados para o grupo.'}`;
 
     await sock.sendMessage(remoteJid, { text: helpText });
   }
 
-  // COMANDO 5: !limpar
+  // COMANDO 7: !limpar
   else if (command === 'limpar') {
-    messageBuffer.clear(remoteJid);
-    await sock.sendMessage(remoteJid, { text: `🧹 Memória temporária desta conversa limpa com sucesso!` });
+    appDatabase.clearChat(remoteJid);
+    await sock.sendMessage(remoteJid, { text: `🧹 Histórico desta conversa apagado do banco SQLite com sucesso!` });
   }
 }
 

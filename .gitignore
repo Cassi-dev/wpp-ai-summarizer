@@ -9,6 +9,14 @@ baileys_auth_info/
 .env
 .env.local
 
+# Banco de Dados SQLite Local e Arquivos Temporários (NUNCA SUBIR PRO GIT!)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+database.sqlite
+
 # Arquivos de Build / Compilação
 dist/
 

@@ -21,13 +21,15 @@
   "author": "Cassiano",
   "license": "MIT",
   "dependencies": {
-    "@google/genai": "^0.1.2",
+    "@google/genai": "^2.22.0",
     "@whiskeysockets/baileys": "^6.7.18",
+    "better-sqlite3": "^13.0.3",
     "dotenv": "^16.4.7",
     "pino": "^9.6.0",
     "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.13.10",
     "@types/qrcode-terminal": "^0.12.2",
     "tsx": "^4.19.3",

@@ -1,11 +1,12 @@
 <div align="center">
 
-# 🤖 WhatsApp AI Summarizer
+# 🤖 WhatsApp AI Summarizer + SQLite
 
-**Monitoramento inteligente de grupos e conversas do WhatsApp com resumos estruturados, transcrição de áudios e respostas a dúvidas via Google Gemini AI.**
+**Monitoramento inteligente de grupos e conversas do WhatsApp com resumos estruturados via Google Gemini AI e persistência local com SQLite.**
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-07405E?style=for-the-badge&logo=sqlite&logoColor=white)
 ![Google Gemini](https://img.shields.io/badge/Gemini%20AI-8E75C2?style=for-the-badge&logo=google&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
 
@@ -15,9 +16,11 @@
 
 ## 📌 Visão Geral do Projeto
 
-Em grupos movimentados de trabalho, estudos ou condomínio, dezenas de mensagens e áudios chegam a cada hora. O **WhatsApp AI Summarizer** resolve essa sobrecarga de informação conectando diretamente ao WhatsApp e gerando **resumos executivos imediatos**, **transcrição de áudios sem precisar ouvi-los** e **respostas para perguntas pontuais sobre o histórico da conversa** via API do Google Gemini.
+Em grupos movimentados de trabalho, estudos ou condomínio, dezenas de mensagens e áudios chegam a cada hora. O **WhatsApp AI Summarizer** resolve essa sobrecarga de informação conectando diretamente ao WhatsApp e unindo:
 
-O diferencial deste projeto não é apenas "gerar texto livre", mas utilizar **Structured Output (JSON Schema)** e capacidades **Multimodais nativas de áudio** para organizar a comunicação em tempo real.
+1. **Persistência em Banco SQLite Local:** Todas as mensagens são salvas em disco de forma contínua e rápida (com índices e modo WAL), permitindo consultas históricas mesmo após reiniciar o computador.
+2. **IA Multimodal e Estruturada (Gemini 3.6 Flash):** Geração de resumos executivos com JSON Schema estrito, respostas pontuais sobre o histórico da conversa e transcrição de áudios sem precisar escutá-los.
+3. **Segurança e Privacidade:** O banco de dados e as credenciais ficam 100% locais no computador do usuário, protegidos por `.gitignore`.
 
 ---
 
@@ -25,34 +28,39 @@ O diferencial deste projeto não é apenas "gerar texto livre", mas utilizar **S
 
 ```mermaid
 graph TD
-    User[WhatsApp / Celular] -->|1. Mensagens de texto| Buffer[Ring Buffer em Memória]
-    User -->|2. Áudio recebido| Media[Download de Áudio Baileys]
+    User[WhatsApp / Celular] -->|1. Mensagens recebidas| Baileys[Baileys WebSocket Client]
+    Baileys -->|Grava em disco instantaneamente| SQLite[(Banco SQLite Local: database.sqlite)]
     
-    User -->|!resumo| Buffer
-    Buffer -->|Últimas N mensagens| GeminiText[Gemini 3.6 Flash: Structured Output]
-    GeminiText -->|JSON com tópicos, decisões e urgência| Format1[Formatador de Markdown]
-    Format1 -->|Envia no chat| User
+    User -->|!resumo| Baileys
+    Baileys -->|Consulta últimas N mensagens| SQLite
+    SQLite -->|Mensagens estruturadas| GeminiText[Gemini 3.6 Flash: Structured Output]
+    GeminiText -->|JSON com tópicos, decisões e urgência| Baileys
+    Baileys -->|Salva resumo no banco| SQLite
+    Baileys -->|Envia resumo no chat| User
     
-    User -->|!pergunta sobre o chat| Buffer
-    Buffer -->|Contexto recente + Dúvida| GeminiQA[Gemini 3.6 Flash: Q&A Contextual]
-    GeminiQA -->|Resposta pontual| User
+    User -->|!buscar palavra| SQLite
+    SQLite -->|Retorna ocorrências com data| Baileys
+    Baileys -->|Exibe no chat| User
 
-    User -->|!ouvir respondendo a um áudio| Media
-    Media -->|Buffer OGG/Opus Base64| GeminiAudio[Gemini 3.6 Flash: Multimodal Audio]
-    GeminiAudio -->|JSON: Transcrição + Resumo executivo| Format2[Formatador de Áudio]
-    Format2 -->|Envia no chat| User
+    User -->|!ouvir respondendo a áudio| Baileys
+    Baileys -->|Buffer de áudio Base64| GeminiAudio[Gemini 3.6 Flash: Multimodal Audio]
+    GeminiAudio -->|Transcrição + Resumo| Baileys
+    Baileys -->|Envia transcrição no chat| User
 ```
 
 ---
 
 ## ✨ Funcionalidades Principais
 
-* **🎧 Transcrição e Resumo de Áudio (`!ouvir`):** Responda a qualquer áudio do WhatsApp com `!ouvir` para o robô baixar a mídia, processar com IA multimodal e devolver o texto transcrito + os pontos principais.
-* **🔍 Perguntas sobre a Conversa (`!pergunta <dúvida>`):** Pergunte qualquer coisa sobre o histórico recente (ex: *"Qual o preço combinado?"*, *"Quem vai levar o documento?"*) e a IA responde direto ao ponto.
-* **📋 Resumo Estruturado com JSON Schema (`!resumo`):** Retorna visão geral, tópicos debatidos, decisões tomadas, pendências e um badge de urgência (🟢 Baixa / 🟡 Média / 🔴 Alta).
-* **🔒 Trava de Segurança Antispam:** Por padrão, apenas você (o dono da conta do WhatsApp) pode acionar comandos nos grupos. Suporta adicionar números permitidos no `.env`.
-* **⚡ Conexão WebSocket Direta:** Sem emuladores pesados de navegador; conexão leve e instantânea via protocolo Baileys.
-* **💾 Ring Buffer em Memória:** Mantém apenas as mensagens mais recentes por chat, evitando consumo desnecessário de memória RAM.
+* **🗄️ Banco de Dados SQLite Local:** 
+  - Armazena todas as mensagens com índices de alta performance (`remote_jid` + `timestamp`).
+  - Habilita o modo **WAL (Write-Ahead Logging)** para velocidade de leitura/escrita simultânea.
+  - Guarda os resumos já gerados para consulta instantânea com `!historico` (sem gastar cota da IA).
+* **🔍 Pesquisa Histórica (`!buscar <palavra>`):** Encontra mensagens antigas no banco SQLite com data e autor original.
+* **🎧 Transcrição e Resumo de Áudio (`!ouvir`):** Responda a qualquer áudio com `!ouvir` para o robô transcrever o conteúdo e resumir os pontos principais via Gemini multimodal.
+* **❓ Consultas Contextuais (`!pergunta <dúvida>`):** Pergunte qualquer coisa sobre o histórico recente (ex: *"Qual o preço combinado?"*) e a IA responde com precisão.
+* **📋 Resumos Estruturados com Schema (`!resumo`):** Retorna visão geral, tópicos debatidos, decisões tomadas, pendências e badge de urgência (🟢 Baixa / 🟡 Média / 🔴 Alta).
+* **🔒 Trava de Segurança Antispam (`ONLY_OWNER`):** Apenas você tem permissão para acionar comandos, evitando consumo abusivo de IA por terceiros.
 
 ---
 
@@ -61,11 +69,11 @@ graph TD
 | Tecnologia / Conceito | Onde e Como foi Usado |
 | :--- | :--- |
 | **Node.js & TypeScript** | Tipagem estrita com `NodeNext`, garantindo robustez e autocompletion em todo o fluxo de dados. |
+| **SQLite (better-sqlite3)** | Banco de dados relacional embarcado em arquivo local com modo WAL e índices compostos. |
 | **IA Multimodal (Áudio + Texto)** | Envio de buffers de áudio em Base64 diretamente para o Gemini 3.6 Flash para transcrição instantânea. |
 | **Event-Driven Architecture** | Escuta reativa de eventos assíncronos (`messages.upsert`, `connection.update`) em vez de polling repetitivo. |
 | **Structured Output (LLM)** | Elimina a imprevisibilidade de texto livre através de contratos de dados em JSON Schema. |
-| **Ring Buffer (Fila Circular)** | Estrutura de dados em memória para descarte automático de mensagens antigas (`FIFO`). |
-| **DevSecOps Hygiene** | Proteção contra vazamento de credenciais e tokens através de variáveis de ambiente (`.env`) e `.gitignore` rigoroso. |
+| **DevSecOps Hygiene** | Chaves `.env`, credenciais `auth_info/` e banco `database.sqlite` protegidos por `.gitignore`. |
 
 ---
 
@@ -102,18 +110,20 @@ npm run dev
 ### 5. Conectar
 1. O terminal exibirá um **QR Code**.
 2. Abra o WhatsApp no celular ➔ toque nos **3 pontos** (ou Configurações) ➔ **Aparelhos Conectados** ➔ **Conectar um aparelho**.
-3. Escaneie o QR Code e pronto!
+3. Escaneie o QR Code e pronto! O arquivo `database.sqlite` será criado automaticamente para arquivar suas mensagens.
 
 ---
 
-## 🎮 Lista de Comandos no WhatsApp
+## 🎮 Lista Completa de Comandos
 
 | Comando | O que faz | Exemplo |
 | :--- | :--- | :--- |
-| `!resumo [n]` | Resume as conversas recentes daquele chat | `!resumo` ou `!resumo 30` |
-| `!pergunta <dúvida>` | Pergunta pontual sobre o que conversaram | `!pergunta Qual o horário marcado?` |
-| `!ouvir` | Responda a um áudio com este comando para transcrever e resumir | Responda ao áudio com `!ouvir` |
-| `!limpar` | Esvazia o buffer de mensagens recentes daquela conversa | `!limpar` |
+| `!resumo [n]` | Resume as últimas mensagens da conversa salvas no SQLite | `!resumo` ou `!resumo 100` |
+| `!pergunta <dúvida>` | Pergunta pontual sobre o histórico da conversa com IA | `!pergunta Qual o horário da entrega?` |
+| `!buscar <palavra>` | Pesquisa mensagens antigas arquivadas no banco SQLite | `!buscar orçamento` |
+| `!historico` | Exibe o último resumo gerado sem gastar cota de IA | `!historico` |
+| `!ouvir` | Responda a um áudio com este comando para transcrever | Responda ao áudio com `!ouvir` |
+| `!limpar` | Apaga o histórico do banco de dados desta conversa | `!limpar` |
 | `!ajuda` | Exibe o menu com todos os comandos disponíveis | `!ajuda` |
 
 ---
