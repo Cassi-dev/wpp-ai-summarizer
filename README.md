@@ -2,7 +2,7 @@
 
 # 🤖 WhatsApp AI Summarizer + SQLite
 
-**Monitoramento inteligente de grupos e conversas do WhatsApp com Google Gemini 3.6 Flash, banco de dados SQLite local e uma Suíte Completa de Superpoderes Invisíveis acionados por Reações de Emoji.**
+**Monitoramento inteligente de grupos e conversas do WhatsApp com Google Gemini 3.8 Flash, banco de dados SQLite local e uma Suíte Completa de Superpoderes Invisíveis acionados por Reações de Emoji.**
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)
@@ -19,7 +19,7 @@
 Em grupos movimentados de trabalho, estudos ou condomínio, dezenas de mensagens e áudios chegam a cada hora. O **WhatsApp AI Summarizer** resolve essa sobrecarga de informação conectando diretamente ao WhatsApp e unindo:
 
 1. **Persistência em Banco SQLite Local:** Todas as mensagens são salvas em disco de forma contínua e rápida (com índices e modo WAL), permitindo consultas históricas mesmo após reiniciar o computador.
-2. **IA Multimodal e Estruturada (Gemini 3.6 Flash):** Geração de resumos executivos com JSON Schema estrito, respostas pontuais sobre o histórico da conversa e transcrição de áudios sem precisar escutá-los.
+2. **IA Multimodal e Estruturada (Gemini 3.8 Flash):** Geração de resumos executivos com JSON Schema estrito, respostas pontuais sobre o histórico da conversa e transcrição de áudios sem precisar escutá-los.
 3. **🤫 Central de Superpoderes Invisíveis (Reações por Emoji):** Você não precisa digitar uma única letra no grupo! Apenas reaja com um emoji na mensagem e o resultado cai **exclusivamente no seu WhatsApp privado**.
 4. **Segurança e Privacidade:** O banco de dados e as credenciais ficam 100% locais no computador do usuário, protegidos por `.gitignore`.
 
@@ -53,7 +53,7 @@ graph TD
     
     User -->|Reage com Emoji em qualquer chat| Baileys
     Baileys -->|Identifica Emoji e Busca no SQLite| SQLite
-    SQLite -->|Mensagem alvo| Gemini[Gemini 3.6 Flash AI]
+    SQLite -->|Mensagem alvo| Gemini[Gemini 3.8 Flash AI]
     Gemini -->|Processa ação específica| Baileys
     
     Baileys -->|Entrega resultado silencioso| PrivateChat[Seu WhatsApp Privado: 📲 Resposta Imediata]
@@ -86,7 +86,7 @@ graph TD
 | **Node.js & TypeScript** | Tipagem estrita com `NodeNext`, garantindo robustez e autocompletion em todo o fluxo de dados. |
 | **Gatilhos por Reações de Mensagem (Reactions)** | Escuta de eventos `reactionMessage` para acionamento invisível de fluxos de IA. |
 | **SQLite (better-sqlite3)** | Banco de dados relacional embarcado em arquivo local com modo WAL e índices compostos. |
-| **IA Multimodal (Áudio + Texto)** | Envio de buffers de áudio em Base64 diretamente para o Gemini 3.6 Flash para transcrição instantânea. |
+| **IA Multimodal (Áudio + Texto)** | Envio de buffers de áudio em Base64 diretamente para o Gemini 3.8 Flash para transcrição instantânea. |
 | **Structured Output & Prompts Especializados** | Schemas estritos para resumos, ghostwriting, fact-checking, extração de tarefas e divisão de contas. |
 | **DevSecOps Hygiene** | Chaves `.env`, credenciais `auth_info/` e banco `database.sqlite` protegidos por `.gitignore`. |
 
