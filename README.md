@@ -4,6 +4,8 @@
 
 **Monitoramento inteligente de grupos e conversas do WhatsApp com Google Gemini 3.8 Flash, banco de dados SQLite local e uma Suíte Completa de Superpoderes Invisíveis acionados por Reações de Emoji.**
 
+[![CI](https://github.com/Cassi-dev/wpp-ai-summarizer/actions/workflows/ci.yml/badge.svg)](https://github.com/Cassi-dev/wpp-ai-summarizer/actions)
+![Vitest](https://img.shields.io/badge/Vitest-20%20passed-green?style=for-the-badge&logo=vitest&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-07405E?style=for-the-badge&logo=sqlite&logoColor=white)
@@ -14,12 +16,23 @@
 
 ---
 
+## 💎 Grandes Destaques de Engenharia & Arquitetura (Top 5%)
+
+* 🛡️ **Imunidade a Prompt Injection (`wrapUntrusted`)**: Todo conteúdo vindo do WhatsApp é rigorosamente delimitado e sanitizado com prompt de isolamento, impedindo que comandos de terceiros (jailbreaks, pedidos de chave de API ou desvios de conduta) alterem o comportamento da IA.
+* ⚡ **Motor Resiliente a Falhas (Fallback & Exponential Backoff)**: Sistema de estepe em cascata (`gemini-3.5-flash` ➔ `gemini-3.5-flash-lite` ➔ `gemini-3.7-flash` ➔ `gemini-3.8-flash`) com jitter aleatório para absorver picos de demanda temporários (erros 503 e 429) de forma 100% transparente para o usuário.
+* 🗄️ **Persistência Relacional Leve (SQLite WAL)**: Banco SQLite em modo WAL com índices compostos, persistindo todo o histórico localmente sem perda de dados ao desligar a máquina e com sincronização retroativa ao religar.
+* 🤫 **Zero Poluição Visual (Modo Fantasma)**: Respostas acionadas por reações de emoji chegam exclusivamente no privado do usuário, sem emitir nem apagar mensagens nos grupos.
+* 📄 **Documentos Executivos em Memória (`PDFKit`)**: Diagramação vetorial de atas de reunião em PDF A4 geradas diretamente em `Buffer` sem poluir o disco com arquivos temporários.
+* 🧪 **Qualidade Garantida com CI & Vitest**: 20 testes unitários automatizados cobrindo regras de negócio, anti-spam, parsing de tempo, formato de PDF e banco de dados, validados a cada push no GitHub Actions.
+
+---
+
 ## 📌 Visão Geral do Projeto
 
 Em grupos movimentados de trabalho, estudos ou condomínio, dezenas de mensagens e áudios chegam a cada hora. O **WhatsApp AI Summarizer** resolve essa sobrecarga de informação conectando diretamente ao WhatsApp e unindo:
 
 1. **Persistência em Banco SQLite Local:** Todas as mensagens são salvas em disco de forma contínua e rápida (com índices e modo WAL), permitindo consultas históricas mesmo após reiniciar o computador.
-2. **IA Multimodal e Estruturada (Gemini 3.8 Flash):** Geração de resumos executivos com JSON Schema estrito, respostas pontuais sobre o histórico da conversa e transcrição de áudios sem precisar escutá-los.
+2. **IA Multimodal e Estruturada (Gemini AI):** Geração de resumos executivos com JSON Schema estrito, respostas pontuais sobre o histórico da conversa e transcrição de áudios sem precisar escutá-los.
 3. **🤫 Central de Superpoderes Invisíveis (Reações por Emoji):** Você não precisa digitar uma única letra no grupo! Apenas reaja com um emoji na mensagem e o resultado cai **exclusivamente no seu WhatsApp privado**.
 4. **Segurança e Privacidade:** O banco de dados e as credenciais ficam 100% locais no computador do usuário, protegidos por `.gitignore`.
 

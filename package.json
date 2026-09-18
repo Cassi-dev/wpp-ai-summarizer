@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
+    "test": "vitest run",
     "start": "node dist/index.js",
     "bot:start": "npm run build && pm2 start dist/index.js --name wpp-bot",
     "bot:stop": "pm2 stop wpp-bot",
@@ -43,6 +44,7 @@
     "@types/qrcode-terminal": "^0.12.2",
     "pm2": "^7.0.4",
     "tsx": "^4.19.3",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^5.0.1"
   }
 }
