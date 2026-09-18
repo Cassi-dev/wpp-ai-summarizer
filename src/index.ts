@@ -257,8 +257,8 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
   console.log(`\n🤖 Comando [${command}] disparado no chat: ${remoteJid}`);
   console.log(`   Destino da resposta: ${destinationJid} (Modo Privado: ${shouldSendPrivate})`);
 
-  // COMANDO: !emojis ou !superpoderes (MANUAL COMPLETO DAS REAÇÕES)
-  if (command === 'emojis' || command === 'superpoderes') {
+  // COMANDO: !emojis ou !emoji ou !superpoderes ou !menu (MANUAL COMPLETO DAS REAÇÕES)
+  if (command === 'emojis' || command === 'emoji' || command === 'superpoderes' || command === 'menu') {
     const guide = `🎛️ *CATÁLOGO DE SUPERPODERES INVISÍVEIS (REAÇÕES)* 🤫
 
 Reaja com qualquer um destes emojis em qualquer mensagem de qualquer chat para ativar a IA em silêncio absoluto (a resposta chega somente no seu privado!):
@@ -510,8 +510,8 @@ Transcreve e resume áudios sem precisar ouvir.
     }
   }
 
-  // COMANDO 6: !ajuda
-  else if (command === 'ajuda') {
+  // COMANDO 6: !ajuda ou !help
+  else if (command === 'ajuda' || command === 'help') {
     const helpText = `🤖 *WhatsApp AI Summarizer - Menu Principal*
 
 • \`!emojis\` ou \`!superpoderes\`
@@ -542,6 +542,13 @@ Transcreve e resume áudios sem precisar ouvir.
   else if (command === 'limpar') {
     appDatabase.clearChat(remoteJid);
     await sock.sendMessage(destinationJid, { text: `🧹 Histórico de [${chatContextLabel}] apagado do banco SQLite!` });
+  }
+
+  // FALLBACK: Comando não reconhecido
+  else {
+    await sock.sendMessage(destinationJid, {
+      text: `❓ Comando \`!${command}\` não reconhecido.\n\nDigite \`!emojis\` para ver o catálogo de superpoderes ou \`!ajuda\` para o menu principal!`,
+    });
   }
 }
 
