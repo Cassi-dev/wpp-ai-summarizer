@@ -76,6 +76,7 @@ const ALLOWED_NUMBERS = (process.env.ALLOWED_NUMBERS || '')
   .split(',')
   .map((n) => n.trim())
   .filter(Boolean);
+const DEFAULT_SUMMARY_LIMIT = Number(process.env.SUMMARY_MESSAGE_LIMIT) || 50;
 
 /**
  * Obtém o JID do WhatsApp privado do usuário (dono da conta)
@@ -164,18 +165,75 @@ async function startWhatsAppBot() {
   // 4. Salva as credenciais sempre que forem atualizadas
   sock.ev.on('creds.update', saveCreds);
 
-  // 5. Escuta e Processamento de Mensagens em Tempo Real (Event-Driven)
+  // 5. Escuta e Processamento de Mensagens em Tempo Real e Sincronização Offline
   sock.ev.on('messages.upsert', async (m) => {
-    if (m.type !== 'notify') return;
+    // Sincronização de histórico: mensagens que chegaram enquanto o bot esteve offline
+    if (m.type === 'append') {
+      for (const msg of m.messages) {
+        try {
+          saveIncomingMessageToDb(msg);
+        } catch {}
+      }
+      return;
+    }
 
-    for (const msg of m.messages) {
-      try {
-        await handleIncomingMessage(sock, msg);
-      } catch (err: any) {
-        console.error('⚠️ Erro ao processar mensagem (bot segue vivo):', err.message);
+    // Mensagens recebidas em tempo real
+    if (m.type === 'notify') {
+      for (const msg of m.messages) {
+        try {
+          await handleIncomingMessage(sock, msg);
+        } catch (err: any) {
+          console.error('⚠️ Erro ao processar mensagem (bot segue vivo):', err.message);
+        }
       }
     }
   });
+
+  // 6. Sincronização de conversas ao reconectar (quando o note é ligado)
+  sock.ev.on('messaging-history.set', ({ messages }: { messages: WAMessage[] }) => {
+    if (!messages || messages.length === 0) return;
+    console.log(`📥 Sincronizando ${messages.length} mensagens do período offline no SQLite...`);
+    let count = 0;
+    for (const msg of messages) {
+      try {
+        if (saveIncomingMessageToDb(msg)) count++;
+      } catch {}
+    }
+    if (count > 0) {
+      console.log(`✅ Sincronização offline concluída: ${count} mensagens registradas no SQLite!`);
+    }
+  });
+}
+
+/**
+ * Salva mensagens de texto comuns no SQLite de forma segura (usado em tempo real e offline)
+ */
+function saveIncomingMessageToDb(msg: WAMessage): boolean {
+  const remoteJid = msg.key.remoteJid;
+  if (!remoteJid || remoteJid === 'status@broadcast') return false;
+
+  const text =
+    msg.message?.conversation ||
+    msg.message?.extendedTextMessage?.text ||
+    msg.message?.imageMessage?.caption ||
+    '';
+
+  if (!text || text.startsWith(COMMAND_PREFIX)) return false;
+
+  const senderName = msg.pushName || 'Usuário';
+  const isGroup = remoteJid.endsWith('@g.us');
+
+  const chatMsg: ChatMessage = {
+    id: msg.key.id || Math.random().toString(),
+    sender: msg.key.participant || remoteJid,
+    senderName,
+    text: text.trim(),
+    timestamp: new Date(((msg.messageTimestamp as number) || Math.floor(Date.now() / 1000)) * 1000),
+    isGroup,
+  };
+
+  appDatabase.saveMessage(remoteJid, chatMsg);
+  return true;
 }
 
 /**
@@ -211,15 +269,7 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 
   // Grava no Banco SQLite automaticamente (se for texto comum e não for comando)
   if (text && !text.startsWith(COMMAND_PREFIX)) {
-    const chatMsg: ChatMessage = {
-      id: msg.key.id || Math.random().toString(),
-      sender: msg.key.participant || remoteJid,
-      senderName,
-      text: text.trim(),
-      timestamp: new Date((msg.messageTimestamp as number) * 1000),
-      isGroup,
-    };
-    appDatabase.saveMessage(remoteJid, chatMsg);
+    saveIncomingMessageToDb(msg);
     return;
   }
 
@@ -328,7 +378,7 @@ Transcreve e resume áudios sem precisar ouvir.
 
   // COMANDO 1: !resumo [n] [pv]
   else if (command === 'resumo') {
-    const limit = cleanArgs[0] && !isNaN(Number(cleanArgs[0])) ? Math.min(Number(cleanArgs[0]), 200) : 50;
+    const limit = cleanArgs[0] && !isNaN(Number(cleanArgs[0])) ? Math.min(Number(cleanArgs[0]), 200) : DEFAULT_SUMMARY_LIMIT;
     const recentMessages = appDatabase.getRecentMessages(remoteJid, limit);
 
     if (recentMessages.length < 3) {
@@ -567,8 +617,8 @@ async function handleReactionTrigger(sock: any, msg: WAMessage, reaction: any, o
 
   // 1. EMOJI 🧠: RESUMO DO CHAT
   if (emoji === '🧠') {
-    console.log(`\n🧠 [Gatilho 🧠]: Resumindo chat ${targetChatJid}...`);
-    const recentMessages = appDatabase.getRecentMessages(targetChatJid, 50);
+    console.log(`\n🧠 [Gatilho 🧠]: Resumindo chat ${targetChatJid} (limite: ${DEFAULT_SUMMARY_LIMIT} mensagens)...`);
+    const recentMessages = appDatabase.getRecentMessages(targetChatJid, DEFAULT_SUMMARY_LIMIT);
 
     if (recentMessages.length < 3) {
       await sock.sendMessage(ownerJid, {
