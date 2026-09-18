@@ -87,7 +87,9 @@ const BRIEFING_GROUPS = (process.env.BRIEFING_GROUPS || '')
   .split(',')
   .map((g) => g.trim().toLowerCase())
   .filter(Boolean);
-const WATCHDOG_KEYWORDS = (process.env.WATCHDOG_KEYWORDS || 'Cassiano,urgente,emergência,atenção,socorro,reunião')
+// Termos genéricos demais ("atenção", "reunião") foram removidos do padrão: disparavam em
+// qualquer conversa comum e inundavam o privado com encaminhamentos irrelevantes.
+const WATCHDOG_KEYWORDS = (process.env.WATCHDOG_KEYWORDS || 'Cassiano,urgente,urgência,emergência,socorro')
   .split(',')
   .map((k) => k.trim().toLowerCase())
   .filter(Boolean);
@@ -1012,8 +1014,19 @@ async function handleReactionTrigger(sock: any, msg: WAMessage, reaction: any, o
   const isGrp = targetChatJid.endsWith('@g.us');
   const chatTitle = isGrp ? 'Grupo' : 'Conversa Privada';
 
-  // 1. EMOJI 🧠: RESUMO DO CHAT
-  if (emoji === '🧠') {
+  // 0. BUSCA A MENSAGEM ALVO E DETECTA O TIPO (precisa saber ANTES de decidir o que o 🧠 faz)
+  const targetMsg = appDatabase.getMessageById(targetMsgId || '');
+  let rawMsgContent: any = null;
+  if (targetMsg?.rawMessage) {
+    try {
+      rawMsgContent = JSON.parse(targetMsg.rawMessage);
+    } catch {}
+  }
+  const isImageOrDoc = Boolean(rawMsgContent?.imageMessage || rawMsgContent?.documentMessage);
+  const isAudio = Boolean(rawMsgContent?.audioMessage);
+
+  // 1. EMOJI 🧠: RESUMO DO CHAT (se a mensagem-alvo for imagem/documento, cai no gatilho multimodal abaixo)
+  if (emoji === '🧠' && !isImageOrDoc) {
     console.log(`\n🧠 [Gatilho 🧠]: Resumindo chat ${targetChatJid} (limite: ${DEFAULT_SUMMARY_LIMIT} mensagens)...`);
     const recentMessages = appDatabase.getRecentMessages(targetChatJid, DEFAULT_SUMMARY_LIMIT);
 
@@ -1096,21 +1109,7 @@ async function handleReactionTrigger(sock: any, msg: WAMessage, reaction: any, o
     return;
   }
 
-  // 2. BUSCA A MENSAGEM ALVO NO BANCO DE DADOS
-  const targetMsg = appDatabase.getMessageById(targetMsgId || '');
-
-  // 2.1 PROCESSAMENTO MULTIMODAL (FOTOS, COMPROVANTES, DOCUMENTOS E ÁUDIOS)
-  let rawMsgContent: any = null;
-  if (targetMsg?.rawMessage) {
-    try {
-      rawMsgContent = JSON.parse(targetMsg.rawMessage);
-    } catch {}
-  }
-
-  const isImageOrDoc = Boolean(rawMsgContent?.imageMessage || rawMsgContent?.documentMessage);
-  const isAudio = Boolean(rawMsgContent?.audioMessage);
-
-  // GATILHO MULTIMODAL: FOTOS, COMPROVANTES OU DOCUMENTOS (reagiu com 📸 ou 💡 ou 🔍)
+  // GATILHO MULTIMODAL: FOTOS, COMPROVANTES OU DOCUMENTOS (reagiu com 📸, 💡, 🔍 ou 🧠)
   if (isImageOrDoc && (emoji === '📸' || emoji === '💡' || emoji === '🔍' || emoji === '🧠')) {
     console.log(`\n📸 [Visão Multimodal]: Baixando e analisando imagem/documento com Gemini 3.8 Flash...`);
     try {
