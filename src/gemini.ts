@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import { AudioSummaryResult, SummaryResult } from './types.js';
+import { MeetingMinutesData } from './pdf.js';
 
 dotenv.config();
 
@@ -645,4 +646,93 @@ Tenha um excelente e produtivo dia! 🚀
   });
 
   return response.text?.trim() || 'Não foi possível gerar o briefing matinal.';
+}
+
+/**
+ * 📄 GERADOR DE ATA: Estrutura os dados de uma conversa para geração de PDF formal
+ */
+export async function generateMeetingMinutesData(
+  formattedChat: string,
+  chatName: string
+): Promise<MeetingMinutesData> {
+  const ai = getAIClient();
+  const currentDate = new Date().toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+
+  const prompt = `
+Você é um redator executivo corporativo especializado em lavrar Atas Formais de Reunião e Alinhamento.
+Analise a conversa abaixo e estruture todos os fatos em formato de ata formal de alto padrão.
+
+CONVERSA DE ORIGEM:
+${wrapUntrusted('CONVERSA_DE_ORIGEM', formattedChat)}
+
+Instruções:
+- Crie um título profissional para a ata baseado no assunto central.
+- Identifique os nomes de todos os participantes que enviaram mensagens.
+- Faça um parágrafo de visão geral contextualizando o que foi debatido.
+- Extraia os tópicos principais de discussão.
+- Destaque as decisões tomadas com clareza.
+- Crie a lista de planos de ação (tarefa, responsável se houver e prazo se houver).
+`;
+
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING, description: 'Título formal da ata/reunião' },
+          contextOverview: { type: Type.STRING, description: 'Resumo contextual e propósito' },
+          participants: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: 'Lista de participantes envolvidos',
+          },
+          keyTopics: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: 'Principais tópicos e temas discutidos',
+          },
+          decisions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: 'Decisões e resoluções acordadas',
+          },
+          actionItems: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                task: { type: Type.STRING, description: 'Descrição da tarefa' },
+                assignee: { type: Type.STRING, description: 'Nome do responsável (se citado)' },
+                deadline: { type: Type.STRING, description: 'Prazo ou data combinada (se citado)' },
+              },
+              required: ['task'],
+            },
+            description: 'Plano de ação com responsáveis e prazos',
+          },
+        },
+        required: ['title', 'contextOverview', 'participants', 'keyTopics', 'decisions', 'actionItems'],
+      },
+    },
+  });
+
+  const raw = response.text?.trim() || '{}';
+  const parsed = JSON.parse(raw);
+
+  return {
+    title: parsed.title || 'Ata de Alinhamento e Decisões',
+    chatName,
+    date: currentDate,
+    participants: parsed.participants || [],
+    contextOverview: parsed.contextOverview || '',
+    keyTopics: parsed.keyTopics || [],
+    decisions: parsed.decisions || [],
+    actionItems: parsed.actionItems || [],
+  };
 }

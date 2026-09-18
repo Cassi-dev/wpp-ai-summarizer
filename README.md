@@ -42,6 +42,7 @@ Basta reagir a qualquer mensagem em qualquer chat com um dos emojis abaixo:
 | **🔗** | **Resumidor de Links** | Extrai os pontos principais de um link ou matéria de jornal sem precisar abrir a página. | 👻 Privado |
 | **🎧** | **Ouvinte de Áudios** | Transcreve e resume mensagens de áudio sem precisar escutá-las. | 👻 Privado |
 | **📸** | **Visão de Fotos & Documentos** | Analisa fotos de comprovantes Pix, contratos, slides, cardápios ou recibos e extrai dados. | 👻 Privado |
+| **📄** | **Gerador de Ata em PDF** | Cria uma Ata Executiva de Reunião formal em PDF com pautas, decisões e plano de ação. | 👻 Privado |
 | **☀️** | **Briefing Matinal Diário** | Consolida o que aconteceu nas últimas 24h dos seus grupos (disparo automático às 07:00 ou via `!briefing`). | 👻 Privado |
 | **🚨** | **Radar de Urgência em Tempo Real** | Monitora grupos e te notifica no privado se alguém citar seu nome ou termos urgentes. | 👻 Privado |
 
@@ -70,6 +71,8 @@ graph TD
 | Comando | O que faz | Onde a resposta aparece |
 | :--- | :--- | :--- |
 | `!emojis` ou `!superpoderes` | **Manual completo:** Exibe a lista de todos os emojis e suas funções | No chat atual |
+| `!foco [tempo]` | 🔕 **Modo Foco & Secretária:** Silencia o privado e responde com educação até seu retorno (`!foco off` / `status`) | No chat atual |
+| `!ata [n]` ou `!pdf [n]` | 📄 **Ata Formal em PDF:** Gera o PDF executivo da conversa atual (adicione `pv` para segredo) | No chat ou privado |
 | `!briefing` | **Briefing Imediato:** Gera o relatório consolidado das últimas 24h dos grupos | No chat ou privado |
 | `!notas` | **Caderno de Notas:** Lista todas as mensagens que você fixou com 📌 | No chat atual |
 | `!resumo [n]` | Resume as últimas mensagens da conversa | No próprio chat |
@@ -89,9 +92,11 @@ graph TD
 | :--- | :--- |
 | **Node.js & TypeScript** | Tipagem estrita com `NodeNext`, garantindo robustez e autocompletion em todo o fluxo de dados. |
 | **Gatilhos por Reações de Mensagem (Reactions)** | Escuta de eventos `reactionMessage` para acionamento invisível de fluxos de IA. |
+| **Geração de Documentos PDF (PDFKit)** | Criação dinâmica em memória (`Buffer`) de atas corporativas com design executivo e envio nativo no WhatsApp. |
+| **Secretária Eletrônica & Modo Foco** | Gestão de sessões temporizadas no SQLite com filtro anti-spam (uma resposta por contato) e quebra por emergência. |
 | **SQLite (better-sqlite3)** | Banco de dados relacional embarcado em arquivo local com modo WAL e índices compostos. |
-| **IA Multimodal (Áudio + Texto)** | Envio de buffers de áudio em Base64 diretamente para o Gemini 3.8 Flash para transcrição instantânea. |
-| **Structured Output & Prompts Especializados** | Schemas estritos para resumos, ghostwriting, fact-checking, extração de tarefas e divisão de contas. |
+| **IA Multimodal (Visão + Áudio + Texto)** | Envio direto de imagens, documentos e áudios para o Gemini 3.8 Flash para transcrição e análise visual. |
+| **Structured Output & Prompts Especializados** | Schemas estritos para resumos, atas formais, ghostwriting, fact-checking e divisão de contas. |
 | **DevSecOps Hygiene** | Chaves `.env`, credenciais `auth_info/` e banco `database.sqlite` protegidos por `.gitignore`. |
 
 ---

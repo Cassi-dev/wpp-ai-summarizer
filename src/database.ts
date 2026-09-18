@@ -62,6 +62,22 @@ class SQLiteDatabaseManager {
 
       CREATE INDEX IF NOT EXISTS idx_pinned_notes_time 
       ON pinned_notes (timestamp DESC);
+
+      CREATE TABLE IF NOT EXISTS focus_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        start_time INTEGER NOT NULL,
+        end_time INTEGER NOT NULL,
+        active INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS focus_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        sender_jid TEXT NOT NULL,
+        sender_name TEXT NOT NULL,
+        text TEXT NOT NULL,
+        timestamp INTEGER NOT NULL
+      );
     `);
 
     // Migração suave: Adiciona raw_message caso a tabela já exista em bancos prévios
@@ -327,6 +343,111 @@ class SQLiteDatabaseManager {
         return `[${hora}] ${m.senderName}: ${m.text}`;
       })
       .join('\n');
+  }
+
+  /**
+   * Inicia uma sessão de Modo Foco
+   */
+  public startFocusMode(durationMinutes: number): { sessionId: number; endTime: Date } {
+    const startTime = Date.now();
+    const endTime = startTime + durationMinutes * 60 * 1000;
+
+    this.db.prepare('UPDATE focus_sessions SET active = 0 WHERE active = 1').run();
+
+    const stmt = this.db.prepare(`
+      INSERT INTO focus_sessions (start_time, end_time, active)
+      VALUES (?, ?, 1)
+    `);
+
+    const result = stmt.run(startTime, endTime);
+    return {
+      sessionId: Number(result.lastInsertRowid),
+      endTime: new Date(endTime),
+    };
+  }
+
+  /**
+   * Encerra o Modo Foco e retorna os contatos que tentaram falar com você
+   */
+  public stopFocusMode(): {
+    hadSession: boolean;
+    durationMinutes: number;
+    callers: Array<{ senderName: string; count: number; lastMessage: string }>;
+  } {
+    const active = this.getActiveFocusSession();
+    if (!active) {
+      return { hadSession: false, durationMinutes: 0, callers: [] };
+    }
+
+    const sessionData = this.db.prepare('SELECT start_time FROM focus_sessions WHERE id = ?').get(active.id) as any;
+    const durationMinutes = Math.max(1, Math.round((Date.now() - sessionData.start_time) / (1000 * 60)));
+
+    this.db.prepare('UPDATE focus_sessions SET active = 0 WHERE id = ?').run(active.id);
+
+    const stmt = this.db.prepare(`
+      SELECT sender_name as senderName, COUNT(*) as count, MAX(text) as lastMessage
+      FROM focus_messages
+      WHERE session_id = ?
+      GROUP BY sender_jid
+      ORDER BY count DESC
+    `);
+
+    const callers = stmt.all(active.id) as any[];
+
+    return {
+      hadSession: true,
+      durationMinutes,
+      callers,
+    };
+  }
+
+  /**
+   * Verifica se há uma sessão de Modo Foco ativa no momento
+   */
+  public getActiveFocusSession(): { id: number; endTime: Date } | null {
+    const stmt = this.db.prepare(`
+      SELECT id, end_time as endTime
+      FROM focus_sessions
+      WHERE active = 1
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+
+    const row = stmt.get() as any;
+    if (!row) return null;
+
+    if (Date.now() > row.endTime) {
+      this.db.prepare('UPDATE focus_sessions SET active = 0 WHERE id = ?').run(row.id);
+      return null;
+    }
+
+    return {
+      id: row.id,
+      endTime: new Date(row.endTime),
+    };
+  }
+
+  /**
+   * Registra uma mensagem recebida durante o Modo Foco
+   */
+  public recordFocusContactMessage(
+    sessionId: number,
+    senderJid: string,
+    senderName: string,
+    text: string
+  ): { isFirstContact: boolean } {
+    const checkStmt = this.db.prepare(`
+      SELECT COUNT(*) as c FROM focus_messages WHERE session_id = ? AND sender_jid = ?
+    `);
+    const count = (checkStmt.get(sessionId, senderJid) as any).c;
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO focus_messages (session_id, sender_jid, sender_name, text, timestamp)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    insertStmt.run(sessionId, senderJid, senderName, text, Date.now());
+
+    return { isFirstContact: count === 0 };
   }
 }
 
