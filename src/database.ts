@@ -32,7 +32,8 @@ class SQLiteDatabaseManager {
         sender_name TEXT NOT NULL,
         text TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
-        is_group INTEGER NOT NULL
+        is_group INTEGER NOT NULL,
+        raw_message TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_messages_chat_time 
@@ -62,6 +63,11 @@ class SQLiteDatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_pinned_notes_time 
       ON pinned_notes (timestamp DESC);
     `);
+
+    // Migração suave: Adiciona raw_message caso a tabela já exista em bancos prévios
+    try {
+      this.db.exec('ALTER TABLE messages ADD COLUMN raw_message TEXT;');
+    } catch {}
   }
 
   /**
@@ -69,8 +75,8 @@ class SQLiteDatabaseManager {
    */
   public saveMessage(remoteJid: string, message: ChatMessage): void {
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO messages (id, remote_jid, sender, sender_name, text, timestamp, is_group)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO messages (id, remote_jid, sender, sender_name, text, timestamp, is_group, raw_message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -80,7 +86,8 @@ class SQLiteDatabaseManager {
       message.senderName,
       message.text,
       message.timestamp.getTime(),
-      message.isGroup ? 1 : 0
+      message.isGroup ? 1 : 0,
+      message.rawMessage || null
     );
   }
 
@@ -116,7 +123,7 @@ class SQLiteDatabaseManager {
    */
   public getMessageById(id: string): ChatMessage | null {
     const stmt = this.db.prepare(`
-      SELECT id, sender, sender_name as senderName, text, timestamp, is_group as isGroup
+      SELECT id, sender, sender_name as senderName, text, timestamp, is_group as isGroup, raw_message as rawMessage
       FROM messages
       WHERE id = ?
     `);
@@ -131,6 +138,7 @@ class SQLiteDatabaseManager {
       text: r.text,
       timestamp: new Date(r.timestamp),
       isGroup: Boolean(r.isGroup),
+      rawMessage: r.rawMessage,
     };
   }
 
@@ -249,6 +257,57 @@ class SQLiteDatabaseManager {
    */
   public clearPinnedNotes(): void {
     this.db.prepare('DELETE FROM pinned_notes').run();
+  }
+
+  /**
+   * Retorna os chats que tiveram movimentação a partir de um determinado timestamp
+   */
+  public getActiveChatsSince(sinceTimestamp: number, minMessages: number = 3): Array<{
+    remoteJid: string;
+    messageCount: number;
+    isGroup: boolean;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT remote_jid as remoteJid, COUNT(*) as messageCount, MAX(is_group) as isGroup
+      FROM messages
+      WHERE timestamp >= ?
+      GROUP BY remote_jid
+      HAVING COUNT(*) >= ?
+      ORDER BY messageCount DESC
+    `);
+
+    const rows = stmt.all(sinceTimestamp, minMessages) as any[];
+    return rows.map((r) => ({
+      remoteJid: r.remoteJid,
+      messageCount: r.messageCount,
+      isGroup: Boolean(r.isGroup),
+    }));
+  }
+
+  /**
+   * Busca mensagens de um chat enviadas a partir de um timestamp
+   */
+  public getMessagesSince(remoteJid: string, sinceTimestamp: number, limit: number = 100): ChatMessage[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM (
+        SELECT id, sender, sender_name as senderName, text, timestamp, is_group as isGroup
+        FROM messages
+        WHERE remote_jid = ? AND timestamp >= ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+      )
+      ORDER BY timestamp ASC
+    `);
+
+    const rows = stmt.all(remoteJid, sinceTimestamp, limit) as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      sender: r.sender,
+      senderName: r.senderName,
+      text: r.text,
+      timestamp: new Date(r.timestamp),
+      isGroup: Boolean(r.isGroup),
+    }));
   }
 
   /**

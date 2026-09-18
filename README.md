@@ -41,6 +41,9 @@ Basta reagir a qualquer mensagem em qualquer chat com um dos emojis abaixo:
 | **💰** | **Divisor de Contas / Rachid** | Calcula a divisão matemática exata dos gastos e o valor que cada um deve pagar no Pix. | 👻 Privado |
 | **🔗** | **Resumidor de Links** | Extrai os pontos principais de um link ou matéria de jornal sem precisar abrir a página. | 👻 Privado |
 | **🎧** | **Ouvinte de Áudios** | Transcreve e resume mensagens de áudio sem precisar escutá-las. | 👻 Privado |
+| **📸** | **Visão de Fotos & Documentos** | Analisa fotos de comprovantes Pix, contratos, slides, cardápios ou recibos e extrai dados. | 👻 Privado |
+| **☀️** | **Briefing Matinal Diário** | Consolida o que aconteceu nas últimas 24h dos seus grupos (disparo automático às 07:00 ou via `!briefing`). | 👻 Privado |
+| **🚨** | **Radar de Urgência em Tempo Real** | Monitora grupos e te notifica no privado se alguém citar seu nome ou termos urgentes. | 👻 Privado |
 
 ---
 
@@ -67,6 +70,7 @@ graph TD
 | Comando | O que faz | Onde a resposta aparece |
 | :--- | :--- | :--- |
 | `!emojis` ou `!superpoderes` | **Manual completo:** Exibe a lista de todos os emojis e suas funções | No chat atual |
+| `!briefing` | **Briefing Imediato:** Gera o relatório consolidado das últimas 24h dos grupos | No chat ou privado |
 | `!notas` | **Caderno de Notas:** Lista todas as mensagens que você fixou com 📌 | No chat atual |
 | `!resumo [n]` | Resume as últimas mensagens da conversa | No próprio chat |
 | `!resumo pv [n]` | 👻 Resume a conversa e manda no seu privado | **Somente no seu PRIVADO** |

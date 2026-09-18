@@ -22,8 +22,11 @@ import {
   summarizeLinkContent,
   transcribeAndSummarizeAudio,
   translateMessage,
+  analyzeImageOrDocument,
+  generateMorningBriefing,
 } from './gemini.js';
 import http from 'http';
+import cron from 'node-cron';
 import { ChatMessage } from './types.js';
 
 dotenv.config();
@@ -77,18 +80,30 @@ const ALLOWED_NUMBERS = (process.env.ALLOWED_NUMBERS || '')
   .map((n) => n.trim())
   .filter(Boolean);
 const DEFAULT_SUMMARY_LIMIT = Number(process.env.SUMMARY_MESSAGE_LIMIT) || 50;
+const BRIEFING_TIME = process.env.BRIEFING_TIME || '07:00';
+const BRIEFING_GROUPS = (process.env.BRIEFING_GROUPS || '')
+  .split(',')
+  .map((g) => g.trim().toLowerCase())
+  .filter(Boolean);
+const WATCHDOG_KEYWORDS = (process.env.WATCHDOG_KEYWORDS || 'Cassiano,urgente,emergência,atenção,socorro,reunião')
+  .split(',')
+  .map((k) => k.trim().toLowerCase())
+  .filter(Boolean);
 
 /**
  * Obtém o JID do WhatsApp privado do usuário (dono da conta)
  */
-function getOwnerJid(sock: any, msg: WAMessage): string {
+function getOwnerJid(sock: any, msg?: WAMessage): string {
   if (sock.user?.id) {
     return jidNormalizedUser(sock.user.id);
   }
-  if (msg.key.participant) {
+  if (msg?.key?.participant) {
     return jidNormalizedUser(msg.key.participant);
   }
-  return jidNormalizedUser(msg.key.remoteJid || '');
+  if (msg?.key?.remoteJid) {
+    return jidNormalizedUser(msg.key.remoteJid);
+  }
+  return '';
 }
 
 /**
@@ -158,7 +173,10 @@ async function startWhatsAppBot() {
       console.log(`🤖 Emojis Invisíveis Ativos no Privado:`);
       console.log(`   👉 🧠 (Resumir)  | ✍️ (Ghostwriter) | 💡 (Explicar) | 📌 (Salvar) | 🌐 (Traduzir)`);
       console.log(`   👉 🎯 (Tarefas)  | 🕵️ (Fact-Check)  | 💰 (Rachid)   | 🔗 (Resumir Link) | 🎧 (Áudio)`);
+      console.log(`   👉 📸 (Foto/Doc) | ☀️ !briefing    | 🚨 Radar de Urgência Ativo`);
       console.log(`   👉 Digite "!emojis" no seu WhatsApp para ver o manual completo!\n`);
+
+      setupMorningBriefingCron(sock);
     }
   });
 
@@ -205,8 +223,106 @@ async function startWhatsAppBot() {
   });
 }
 
+let briefingScheduled = false;
+
 /**
- * Salva mensagens de texto comuns no SQLite de forma segura (usado em tempo real e offline)
+ * Configura o agendamento do Briefing Matinal no fuso de Brasília
+ */
+function setupMorningBriefingCron(sock: any) {
+  if (briefingScheduled) return;
+  briefingScheduled = true;
+
+  const [hour, minute] = BRIEFING_TIME.split(':').map((n) => Number(n) || 0);
+  const cronExpression = `${minute} ${hour} * * *`;
+
+  console.log(`⏰ [Agendador] Briefing Matinal diário programado para às ${BRIEFING_TIME} (${cronExpression})`);
+
+  cron.schedule(
+    cronExpression,
+    async () => {
+      console.log(`\n⏰ [Cron] Disparando Briefing Matinal diário das ${BRIEFING_TIME}...`);
+      await runMorningBriefing(sock);
+    },
+    { timezone: 'America/Sao_Paulo' }
+  );
+}
+
+/**
+ * Executa a consolidação das últimas 24h e entrega o Briefing Matinal
+ */
+async function runMorningBriefing(sock: any, destinationOverride?: string) {
+  const ownerJid = destinationOverride || getOwnerJid(sock);
+  if (!ownerJid) {
+    console.error('⚠️ Briefing cancelado: JID do usuário não encontrado.');
+    return;
+  }
+
+  const sinceTimestamp = Date.now() - 24 * 60 * 60 * 1000;
+  const activeChats = appDatabase.getActiveChatsSince(sinceTimestamp, 2);
+
+  if (activeChats.length === 0) {
+    await sock.sendMessage(ownerJid, {
+      text: `☀️ *BOM DIA!*\n\n📅 Nenhuma conversa ou movimentação relevante foi detectada nos seus grupos nas últimas 24 horas.\n\nTenha um excelente dia! 🚀`,
+    });
+    return;
+  }
+
+  const groupsData: Array<{ groupName: string; formattedMessages: string }> = [];
+
+  for (const chat of activeChats) {
+    let groupName = 'Conversa';
+    if (chat.isGroup) {
+      try {
+        const meta = await sock.groupMetadata(chat.remoteJid).catch(() => null);
+        groupName = meta?.subject || 'Grupo';
+      } catch {
+        groupName = 'Grupo';
+      }
+    } else {
+      if (BRIEFING_GROUPS.length > 0) continue;
+      groupName = 'Chat Privado';
+    }
+
+    if (BRIEFING_GROUPS.length > 0) {
+      const match = BRIEFING_GROUPS.some(
+        (filter) => groupName.toLowerCase().includes(filter) || chat.remoteJid.toLowerCase().includes(filter)
+      );
+      if (!match) continue;
+    }
+
+    const msgs = appDatabase.getMessagesSince(chat.remoteJid, sinceTimestamp, 60);
+    if (msgs.length === 0) continue;
+
+    const formatted = appDatabase.formatForAI(msgs);
+    groupsData.push({
+      groupName,
+      formattedMessages: formatted,
+    });
+
+    if (groupsData.length >= 6) break;
+  }
+
+  if (groupsData.length === 0) {
+    await sock.sendMessage(ownerJid, {
+      text: `☀️ *BOM DIA!*\n\n📅 Nenhum dos grupos monitorados para o briefing teve movimentação recente nas últimas 24 horas.`,
+    });
+    return;
+  }
+
+  try {
+    const briefingText = await generateMorningBriefing(groupsData);
+    await sock.sendMessage(ownerJid, { text: briefingText });
+    console.log(`✅ Briefing Matinal entregue com sucesso para: ${ownerJid}`);
+  } catch (err: any) {
+    console.error('Erro ao gerar briefing matinal:', err);
+    await sock.sendMessage(ownerJid, {
+      text: `❌ Falha ao processar o briefing matinal de hoje: ${err.message || 'Erro inesperado'}`,
+    });
+  }
+}
+
+/**
+ * Salva mensagens comuns e mídias no SQLite de forma segura (usado em tempo real e offline)
  */
 function saveIncomingMessageToDb(msg: WAMessage): boolean {
   const remoteJid = msg.key.remoteJid;
@@ -216,6 +332,10 @@ function saveIncomingMessageToDb(msg: WAMessage): boolean {
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
     msg.message?.imageMessage?.caption ||
+    msg.message?.documentMessage?.caption ||
+    (msg.message?.imageMessage ? '[Imagem/Foto]' : '') ||
+    (msg.message?.documentMessage ? `[Documento: ${msg.message.documentMessage.fileName || 'arquivo'}]` : '') ||
+    (msg.message?.audioMessage ? '[Áudio]' : '') ||
     '';
 
   if (!text || text.startsWith(COMMAND_PREFIX)) return false;
@@ -230,6 +350,7 @@ function saveIncomingMessageToDb(msg: WAMessage): boolean {
     text: text.trim(),
     timestamp: new Date(((msg.messageTimestamp as number) || Math.floor(Date.now() / 1000)) * 1000),
     isGroup,
+    rawMessage: msg.message ? JSON.stringify(msg.message) : undefined,
   };
 
   appDatabase.saveMessage(remoteJid, chatMsg);
@@ -270,6 +391,32 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
   // Grava no Banco SQLite automaticamente (se for texto comum e não for comando)
   if (text && !text.startsWith(COMMAND_PREFIX)) {
     saveIncomingMessageToDb(msg);
+
+    // --- 🚨 RADAR DE URGÊNCIA & MENÇÕES EM TEMPO REAL ---
+    if (isGroup && !msg.key.fromMe) {
+      const textLower = text.toLowerCase();
+      const matchedKeyword = WATCHDOG_KEYWORDS.find((kw) => textLower.includes(kw));
+
+      if (matchedKeyword) {
+        console.log(`🚨 [Radar de Urgência]: Termo "${matchedKeyword}" detectado em ${remoteJid} por ${senderName}`);
+        let groupTitle = 'Grupo';
+        try {
+          const meta = await sock.groupMetadata(remoteJid).catch(() => null);
+          if (meta?.subject) groupTitle = meta.subject;
+        } catch {}
+
+        const alertMessage =
+          `🚨 *ALERTA DO RADAR DE URGÊNCIA* 🚨\n\n` +
+          `👥 *Grupo:* ${groupTitle}\n` +
+          `👤 *De:* ${senderName}\n` +
+          `🔑 *Termo detectado:* "${matchedKeyword}"\n\n` +
+          `💬 *Mensagem:*\n"${text.trim()}"\n\n` +
+          `_Aviso em tempo real enviado no seu privado_ ⚡`;
+
+        await sock.sendMessage(ownerJid, { text: alertMessage });
+      }
+    }
+
     return;
   }
 
@@ -314,13 +461,16 @@ async function handleIncomingMessage(sock: any, msg: WAMessage) {
 Reaja com qualquer um destes emojis em qualquer mensagem de qualquer chat para ativar a IA em silêncio absoluto (a resposta chega somente no seu privado!):
 
 🧠 *[Cérebro]* ➔ *Resumo Completo:*
-Lê as últimas 50 mensagens daquele chat e gera um resumo executivo com tópicos, decisões e urgência.
+Lê as últimas mensagens daquele chat e gera um resumo executivo com tópicos, decisões e urgência.
 
 ✍️ *[Caneta]* ➔ *Ghostwriter de Respostas:*
 Gera 3 opções elegantes de resposta para você enviar de volta (Profissional, Amigável ou Direta).
 
 💡 *[Lâmpada]* ➔ *Explicador Didático:*
 Explica um termo técnico, texto longo ou assunto confuso em linguagem simples.
+
+📸 *[Câmera]* ➔ *Visão de Fotos & Documentos:*
+Reaja em fotos de comprovantes Pix, contratos, recibos ou gráficos para ter uma análise detalhada.
 
 📌 *[Alfinete]* ➔ *Fixar nos Favoritos (SQLite):*
 Salva a mensagem marcada no seu banco de dados local. Digite \`!notas\` para consultar!
@@ -343,10 +493,24 @@ Resume o conteúdo e os pontos principais de um link sem você precisar abrir a 
 🎧 *[Fones]* ➔ *Ouvinte de Áudio:*
 Transcreve e resume áudios sem precisar ouvir.
 
+☀️ *\`!briefing\`* ➔ *Briefing Matinal Executivo:*
+Consolida em uma mensagem o que aconteceu nas últimas 24h (automático às ${BRIEFING_TIME}).
+
+🚨 *Radar de Urgência Ativo:*
+Monitora grupos e te avisa no privado em tempo real se chamarem seu nome ou palavras urgentes!
+
 ━━━━━━━━━━━━━━━━━━━━
 💡 _Dica: No chat onde você reage, nada é enviado nem apagado. Ninguém vê nada além da sua reação!_`;
 
     await sock.sendMessage(destinationJid, { text: guide });
+  }
+
+  // COMANDO: !briefing (Dispara o briefing matinal consolidado sob demanda)
+  else if (command === 'briefing') {
+    await sock.sendMessage(destinationJid, {
+      text: `☀️ *Preparando seu Briefing Executivo...* Consultando conversas das últimas 24h com o Gemini AI! ⏳`,
+    });
+    await runMorningBriefing(sock, destinationJid);
   }
 
   // COMANDO: !notas (LISTA TODAS AS MENSAGENS FIXADAS COM 📌)
@@ -646,6 +810,99 @@ async function handleReactionTrigger(sock: any, msg: WAMessage, reaction: any, o
 
   // 2. BUSCA A MENSAGEM ALVO NO BANCO DE DADOS
   const targetMsg = appDatabase.getMessageById(targetMsgId || '');
+
+  // 2.1 PROCESSAMENTO MULTIMODAL (FOTOS, COMPROVANTES, DOCUMENTOS E ÁUDIOS)
+  let rawMsgContent: any = null;
+  if (targetMsg?.rawMessage) {
+    try {
+      rawMsgContent = JSON.parse(targetMsg.rawMessage);
+    } catch {}
+  }
+
+  const isImageOrDoc = Boolean(rawMsgContent?.imageMessage || rawMsgContent?.documentMessage);
+  const isAudio = Boolean(rawMsgContent?.audioMessage);
+
+  // GATILHO MULTIMODAL: FOTOS, COMPROVANTES OU DOCUMENTOS (reagiu com 📸 ou 💡 ou 🔍)
+  if (isImageOrDoc && (emoji === '📸' || emoji === '💡' || emoji === '🔍' || emoji === '🧠')) {
+    console.log(`\n📸 [Visão Multimodal]: Baixando e analisando imagem/documento com Gemini 3.8 Flash...`);
+    try {
+      const fakeMsg: WAMessage = {
+        key: {
+          remoteJid: targetChatJid,
+          id: targetMsgId,
+        },
+        message: rawMsgContent,
+      };
+
+      const mediaBuffer = await downloadMediaMessage(
+        fakeMsg,
+        'buffer',
+        {},
+        { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+      );
+
+      const mimeType =
+        rawMsgContent.imageMessage?.mimetype ||
+        rawMsgContent.documentMessage?.mimetype ||
+        'image/jpeg';
+
+      const caption =
+        rawMsgContent.imageMessage?.caption ||
+        rawMsgContent.documentMessage?.caption ||
+        targetMsg?.text ||
+        '';
+
+      const analysis = await analyzeImageOrDocument(mediaBuffer.toString('base64'), mimeType, caption);
+      await sock.sendMessage(ownerJid, {
+        text: `👻 *[VISÃO DE IMAGEM / DOCUMENTO 📸 - ${chatTitle}]*\n\n` + analysis,
+      });
+      console.log(`✅ Análise de imagem/documento entregue no privado!`);
+      return;
+    } catch (err: any) {
+      console.error('Erro ao baixar e analisar imagem por reação:', err);
+      await sock.sendMessage(ownerJid, {
+        text: `⚠️ Não foi possível baixar a imagem para análise: ${err.message || 'Mídia indisponível'}`,
+      });
+      return;
+    }
+  }
+
+  // GATILHO MULTIMODAL: ÁUDIO (reagiu com 🎧 ou 💡)
+  if (isAudio && (emoji === '🎧' || emoji === '💡')) {
+    console.log(`\n🎧 [Áudio Multimodal]: Baixando e transcrevendo áudio com Gemini 3.8 Flash...`);
+    try {
+      const fakeMsg: WAMessage = {
+        key: {
+          remoteJid: targetChatJid,
+          id: targetMsgId,
+        },
+        message: rawMsgContent,
+      };
+
+      const audioBuffer = await downloadMediaMessage(
+        fakeMsg,
+        'buffer',
+        {},
+        { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+      );
+
+      const mimeType = rawMsgContent.audioMessage?.mimetype || 'audio/ogg';
+      const audioResult = await transcribeAndSummarizeAudio(audioBuffer.toString('base64'), mimeType);
+      const reply =
+        `👻 *[TRANSCRIÇÃO DE ÁUDIO 🎧 - ${chatTitle}]*\n\n` +
+        formatAudioSummaryForWhatsApp(audioResult);
+
+      await sock.sendMessage(ownerJid, { text: reply });
+      console.log(`✅ Transcrição de áudio entregue no privado!`);
+      return;
+    } catch (err: any) {
+      console.error('Erro ao transcrever áudio por reação:', err);
+      await sock.sendMessage(ownerJid, {
+        text: `⚠️ Não foi possível transcrever este áudio: ${err.message || 'Falha no download'}`,
+      });
+      return;
+    }
+  }
 
   // 3. EMOJI 📌: SALVAR NOTA NOS FAVORITOS DO SQLITE
   if (emoji === '📌') {

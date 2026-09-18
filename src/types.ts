@@ -8,6 +8,7 @@ export interface ChatMessage {
   text: string;
   timestamp: Date;
   isGroup: boolean;
+  rawMessage?: string;
 }
 
 /**

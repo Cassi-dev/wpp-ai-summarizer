@@ -540,3 +540,109 @@ _Resumo executivo sem precisar abrir a página_ ⚡
 
   return response.text?.trim() || 'Não consegui resumir o link.';
 }
+
+/**
+ * 📸 VISÃO COMPUTACIONAL: Analisa imagens, comprovantes, recibos, fotos ou documentos
+ */
+export async function analyzeImageOrDocument(
+  mediaBase64: string,
+  mimeType: string,
+  captionText: string = ''
+): Promise<string> {
+  const ai = getAIClient();
+  const prompt = `
+Você é um assistente de visão computacional de elite e analista de documentos do WhatsApp.
+Analise a imagem/documento anexado com máxima precisão e clareza.
+- Se for um comprovante de pagamento / Pix: extraia valor (R$), pagador, recebedor, data, horário e autenticação/ID.
+- Se for um contrato / documento: resuma os pontos principais, valores, prazos e cláusulas críticas.
+- Se for um gráfico, infográfico ou slide: explique os dados, métricas e conclusões centrais.
+- Se for um cardápio, recibo ou lista de preços: detalhe os itens, quantidades e valores.
+- Se for qualquer outra imagem ou foto: descreva o que ela mostra e explique o contexto útil.
+
+${captionText ? wrapUntrusted('LEGENDA DA MENSAGEM', captionText) : ''}
+
+Formate sua resposta em markdown elegante para WhatsApp:
+📸 *ANÁLISE DE IMAGEM / DOCUMENTO VIA GEMINI*
+
+📝 *Visão Geral:*
+(resumo claro e direto do que a imagem contém)
+
+🔍 *Principais Detalhes Identificados:*
+• (detalhe 1)
+• (detalhe 2)
+• (detalhe 3)
+
+💡 *Conclusão / Ação Recomendada:*
+(se houver algo que exija atenção ou próximos passos)
+
+_Analisado com Gemini 3.8 Flash Multimodal_ ✨
+`;
+
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: [
+      {
+        inlineData: {
+          mimeType: mimeType || 'image/jpeg',
+          data: mediaBase64,
+        },
+      },
+      {
+        text: prompt,
+      },
+    ],
+  });
+
+  return response.text?.trim() || 'Não consegui analisar a imagem.';
+}
+
+/**
+ * ☀️ BRIEFING MATINAL: Consolida conversas e decisões das últimas 24h dos grupos prioritários
+ */
+export async function generateMorningBriefing(
+  groupsData: Array<{ groupName: string; formattedMessages: string }>
+): Promise<string> {
+  const ai = getAIClient();
+
+  const groupsContent = groupsData
+    .map(
+      (g, idx) =>
+        `--- GRUPO ${idx + 1}: ${g.groupName} ---\n${wrapUntrusted(`MENSAGENS DO GRUPO ${g.groupName}`, g.formattedMessages)}`
+    )
+    .join('\n\n');
+
+  const prompt = `
+Você é um Chief of Staff / Assessor Executivo pessoal de elite.
+Seu objetivo é preparar o "Briefing Matinal" diário do usuário com base no que aconteceu nos grupos dele nas últimas 24 horas.
+
+Abaixo estão as conversas agrupadas por grupo:
+${groupsContent}
+
+Instruções rígidas:
+1. Seja extremamente conciso, direto e executivo (sem enrolação nem redundâncias).
+2. Destaque apenas o que realmente importa: decisões tomadas, tarefas pendentes, avisos de reuniões ou problemas que exigem atenção.
+3. Se um grupo só teve conversa fiada, piadas ou amenidades sem nenhuma decisão ou tarefa relevante, resuma em uma linha amigável: "• Conversas casuais, sem pendências".
+4. Destaque com 🚨 qualquer urgência real.
+
+Formate a resposta EXATAMENTE com este modelo em markdown do WhatsApp:
+☀️ *BOM DIA!*
+📅 *Briefing Matinal - Visão Consolidada das Últimas 24h*
+
+(Para cada grupo com atividade relevante, crie uma seção):
+👥 *[Nome do Grupo]*
+• (Decisão, novidade ou tarefa 1)
+• (Decisão, novidade ou tarefa 2)
+
+🎯 *Prioridades e Pendências para Hoje:*
+• (Lista consolidada das ações que dependem de atenção hoje, ou "Nenhuma pendência crítica para hoje")
+
+Tenha um excelente e produtivo dia! 🚀
+`;
+
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: prompt,
+  });
+
+  return response.text?.trim() || 'Não foi possível gerar o briefing matinal.';
+}
