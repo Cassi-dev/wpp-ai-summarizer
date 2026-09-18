@@ -140,6 +140,25 @@ function parseFocusDuration(arg?: string): number {
 }
 
 /**
+ * Formata mensagens de erro da IA para uma resposta amigável e humana no WhatsApp
+ */
+function formatAiErrorMessage(err: any, defaultContext = 'solicitação'): string {
+  const rawMsg = err?.message || String(err || '');
+  if (
+    rawMsg.includes('503') ||
+    rawMsg.includes('high demand') ||
+    rawMsg.includes('UNAVAILABLE') ||
+    rawMsg.includes('overloaded')
+  ) {
+    return 'Os servidores do Google Gemini estão enfrentando um pico temporário de demanda. O bot realizou tentativas de contingência, mas a nuvem segue congestionada. Aguarde 1 a 2 minutos e tente novamente!';
+  }
+  if (rawMsg.includes('429') || rawMsg.includes('RESOURCE_EXHAUSTED')) {
+    return 'Limite de requisições por minuto atingido no Gemini. Aguarde 30 segundos antes de tentar novamente.';
+  }
+  return rawMsg || `Erro inesperado ao processar ${defaultContext}.`;
+}
+
+/**
  * Função principal que inicia o cliente WhatsApp e escuta os eventos
  */
 async function startWhatsAppBot() {
@@ -337,7 +356,7 @@ async function runMorningBriefing(sock: any, destinationOverride?: string) {
   } catch (err: any) {
     console.error('Erro ao gerar briefing matinal:', err);
     await sock.sendMessage(ownerJid, {
-      text: `❌ Falha ao processar o briefing matinal de hoje: ${err.message || 'Erro inesperado'}`,
+      text: `❌ Falha ao processar o briefing matinal de hoje: ${formatAiErrorMessage(err, 'o briefing matinal')}`,
     });
   }
 }
@@ -740,7 +759,7 @@ Monitora grupos e te avisa no privado em tempo real se chamarem seu nome ou pala
     } catch (err: any) {
       console.error('Erro ao gerar ata em PDF:', err);
       await sock.sendMessage(destinationJid, {
-        text: `❌ Falha ao gerar ata em PDF: ${err.message || 'Erro inesperado'}`,
+        text: `❌ Falha ao gerar ata em PDF: ${formatAiErrorMessage(err, 'a ata em PDF')}`,
       });
     }
   }
@@ -773,7 +792,7 @@ Monitora grupos e te avisa no privado em tempo real se chamarem seu nome ou pala
     } catch (error: any) {
       console.error('Erro ao gerar resumo:', error);
       await sock.sendMessage(destinationJid, {
-        text: `❌ Falha ao processar resumo: ${error.message || 'Erro inesperado'}`,
+        text: `❌ Falha ao processar resumo: ${formatAiErrorMessage(error, 'o resumo')}`,
       });
     }
   }
@@ -811,7 +830,7 @@ Monitora grupos e te avisa no privado em tempo real se chamarem seu nome ou pala
     } catch (error: any) {
       console.error('Erro ao responder pergunta:', error);
       await sock.sendMessage(destinationJid, {
-        text: `❌ Erro ao consultar IA: ${error.message || 'Erro inesperado'}`,
+        text: `❌ Erro ao consultar IA: ${formatAiErrorMessage(error, 'a resposta')}`,
       });
     }
   }
@@ -1071,7 +1090,7 @@ async function handleReactionTrigger(sock: any, msg: WAMessage, reaction: any, o
     } catch (err: any) {
       console.error('Erro no gatilho 📄:', err);
       await sock.sendMessage(ownerJid, {
-        text: `❌ Falha ao gerar ata em PDF: ${err.message || 'Erro inesperado'}`,
+        text: `❌ Falha ao gerar ata em PDF: ${formatAiErrorMessage(err, 'a ata em PDF')}`,
       });
     }
     return;
